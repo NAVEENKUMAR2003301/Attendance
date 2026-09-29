@@ -1,48 +1,56 @@
+import { ref, get, set, update, onValue, child } from "firebase/database";
+import { db } from "../firebase";
 import { DEFAULT_EMPLOYEES } from "../data/employees";
 
-const EMP_KEY = "employees";
-const ATT_KEY = "attendance";
+// ---------- EMPLOYEES ----------
 
-export const getEmployees = () => {
-  const raw = localStorage.getItem(EMP_KEY);
-  if (!raw) {
-    localStorage.setItem(EMP_KEY, JSON.stringify(DEFAULT_EMPLOYEES));
-    return DEFAULT_EMPLOYEES;
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return DEFAULT_EMPLOYEES;
+export const seedEmployeesIfEmpty = async () => {
+  const snap = await get(ref(db, "employees"));
+  if (!snap.exists()) {
+    await set(ref(db, "employees"), DEFAULT_EMPLOYEES);
   }
 };
 
-export const addEmployee = (name) => {
-  const list = getEmployees();
-  const trimmed = name.trim();
-  if (!trimmed) return list;
-  if (list.some((e) => e.toLowerCase() === trimmed.toLowerCase())) return list;
-  const updated = [...list, trimmed];
-  localStorage.setItem(EMP_KEY, JSON.stringify(updated));
-  return updated;
+export const subscribeEmployees = (callback) => {
+  const r = ref(db, "employees");
+  return onValue(r, (snap) => {
+    const val = snap.val();
+    callback(val ? Object.values(val) : []);
+  });
 };
 
-export const deleteEmployee = (name) => {
-  const updated = getEmployees().filter((e) => e !== name);
-  localStorage.setItem(EMP_KEY, JSON.stringify(updated));
-  return updated;
+export const getEmployeeNames = async () => {
+  const snap = await get(ref(db, "employees"));
+  const val = snap.val();
+  return val ? Object.values(val).map((e) => e.name) : [];
 };
 
-export const getAttendance = () => {
-  try {
-    return JSON.parse(localStorage.getItem(ATT_KEY)) || {};
-  } catch {
-    return {};
-  }
+export const addEmployee = async (name, pin) => {
+  const list = await getEmployeeNames();
+  if (list.some((n) => n.toLowerCase() === name.toLowerCase())) return;
+  const newPin = pin || generatePin();
+  const id = Date.now().toString();
+  await set(ref(db, `employees/${id}`), { name, pin: newPin });
 };
 
-export const saveAttendance = (data) => {
-  localStorage.setItem(ATT_KEY, JSON.stringify(data));
+export const deleteEmployee = async (id) => {
+  await set(ref(db, `employees/${id}`), null);
 };
+
+export const updateEmployeePin = async (id, newPin) => {
+  await update(ref(db, `employees/${id}`), { pin: newPin });
+};
+
+export const verifyPin = async (name, pin) => {
+  const snap = await get(ref(db, "employees"));
+  const val = snap.val() || {};
+  return Object.values(val).some((e) => e.name === name && e.pin === pin);
+};
+
+export const generatePin = () =>
+  String(Math.floor(1000 + Math.random() * 9000));
+
+// ---------- ATTENDANCE ----------
 
 export const getTodayKey = () => {
   const d = new Date();
@@ -52,15 +60,18 @@ export const getTodayKey = () => {
   return `${y}-${m}-${day}`;
 };
 
-export const getRecord = (dateKey, employee) => {
-  const all = getAttendance();
-  return all[dateKey]?.[employee] || { checkIn: null, checkOut: null };
+export const setRecord = async (dateKey, employee, patch) => {
+  await update(ref(db, `attendance/${dateKey}/${employee}`), patch);
 };
 
-export const setRecord = (dateKey, employee, patch) => {
-  const all = getAttendance();
-  if (!all[dateKey]) all[dateKey] = {};
-  all[dateKey][employee] = { ...(all[dateKey][employee] || {}), ...patch };
-  saveAttendance(all);
-  return all[dateKey][employee];
+export const subscribeAttendance = (dateKey, callback) => {
+  const r = ref(db, `attendance/${dateKey}`);
+  return onValue(r, (snap) => {
+    callback(snap.val() || {});
+  });
+};
+
+export const getRecord = async (dateKey, employee) => {
+  const snap = await get(ref(db, `attendance/${dateKey}/${employee}`));
+  return snap.val() || { checkIn: null, checkOut: null };
 };

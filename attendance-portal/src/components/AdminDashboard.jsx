@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
-  getEmployees,
+  subscribeEmployees,
+  subscribeAttendance,
   addEmployee,
   deleteEmployee,
-  getAttendance,
-  getTodayKey,
   setRecord,
+  getTodayKey,
+  updateEmployeePin,
+  generatePin,
 } from "../utils/storage";
 import { prettyTime } from "../utils/timeUtils";
 import { exportToExcel, importFromExcel } from "../utils/excelUtils";
@@ -21,49 +23,46 @@ export default function AdminDashboard({ onBack }) {
   const [toast, setToast] = useState("");
   const fileRef = useRef();
 
-  const refresh = () => {
-    setEmployees(getEmployees());
-    setAttendance(getAttendance());
-  };
-
+  // LIVE employees
   useEffect(() => {
-    refresh();
+    const unsub = subscribeEmployees(setEmployees);
+    return () => unsub();
   }, []);
+
+  // LIVE attendance (real-time sync from all devices)
+  useEffect(() => {
+    const unsub = subscribeAttendance(date, setAttendance);
+    return () => unsub();
+  }, [date]);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   };
 
-  const dayData = attendance[date] || {};
+  const dayData = attendance || {};
 
   const startEdit = (employee, field) => {
     setEditing({ employee, field });
     setEditValue(dayData[employee]?.[field] || "");
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editing) return;
     const { employee, field } = editing;
-    const updated = setRecord(date, employee, { [field]: editValue || null });
-    setAttendance((a) => ({
-      ...a,
-      [date]: { ...(a[date] || {}), [employee]: updated },
-    }));
+    await setRecord(date, employee, { [field]: editValue || null });
     setEditing(null);
     showToast(`Updated ${employee}'s ${field}`);
   };
 
-  const handleAddEmployee = (name) => {
-    const updated = addEmployee(name);
-    setEmployees(updated);
+  const handleAddEmployee = async (name, pin) => {
+    await addEmployee(name, pin);
     showToast(`Added ${name}`);
   };
 
-  const handleDelete = (name) => {
-    if (!window.confirm(`Delete ${name}? Their attendance history remains.`)) return;
-    const updated = deleteEmployee(name);
-    setEmployees(updated);
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`Delete ${name}?`)) return;
+    await deleteEmployee(id);
     showToast(`Deleted ${name}`);
   };
 
@@ -72,8 +71,7 @@ export default function AdminDashboard({ onBack }) {
     if (!file) return;
     try {
       await importFromExcel(file, date);
-      refresh();
-      showToast("Excel imported successfully");
+      showToast("Excel imported");
     } catch {
       showToast("Import failed");
     }
@@ -84,10 +82,7 @@ export default function AdminDashboard({ onBack }) {
     <div className="min-h-screen px-4 py-8">
       <div className="max-w-6xl mx-auto">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <button
-            onClick={onBack}
-            className="text-cyan-700 hover:text-cyan-900 font-semibold"
-          >
+          <button onClick={onBack} className="text-cyan-700 hover:text-cyan-900 font-semibold">
             ← Logout
           </button>
           <h1 className="text-3xl md:text-4xl font-bold text-cyan-800 text-center flex-1">
@@ -129,14 +124,15 @@ export default function AdminDashboard({ onBack }) {
           />
 
           <button
-            onClick={() => exportToExcel(date)}
+            onClick={() => exportToExcel(date, employees, attendance)}
             className="px-4 py-2 rounded-lg bg-indigo-500 text-white font-semibold shadow hover:scale-105 transition"
           >
             ⬇️ Export Excel
           </button>
 
-          <div className="ml-auto text-sm text-cyan-700">
-            Total: <b>{employees.length}</b>
+          <div className="ml-auto flex items-center gap-2 text-sm text-cyan-700">
+            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            <span>Live · Total: <b>{employees.length}</b></span>
           </div>
         </div>
 
@@ -147,6 +143,7 @@ export default function AdminDashboard({ onBack }) {
                 <tr>
                   <th className="px-4 py-3 text-sm font-semibold">#</th>
                   <th className="px-4 py-3 text-sm font-semibold">Employee</th>
+                  <th className="px-4 py-3 text-sm font-semibold">PIN</th>
                   <th className="px-4 py-3 text-sm font-semibold">Check In</th>
                   <th className="px-4 py-3 text-sm font-semibold">Check Out</th>
                   <th className="px-4 py-3 text-sm font-semibold">Status</th>
@@ -154,7 +151,8 @@ export default function AdminDashboard({ onBack }) {
                 </tr>
               </thead>
               <tbody>
-                {employees.map((emp, i) => {
+                {employees.map((empObj, i) => {
+                  const emp = empObj.name;
                   const rec = dayData[emp] || {};
                   const status =
                     rec.checkIn && rec.checkOut
@@ -171,13 +169,28 @@ export default function AdminDashboard({ onBack }) {
 
                   return (
                     <tr
-                      key={emp}
+                      key={empObj.id || emp}
                       className={`border-t border-cyan-100 hover:bg-cyan-50/60 transition ${
                         i % 2 ? "bg-white/40" : "bg-white/20"
                       }`}
                     >
                       <td className="px-4 py-3 text-cyan-700 text-sm">{i + 1}</td>
                       <td className="px-4 py-3 font-semibold text-cyan-900">{emp}</td>
+
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={async () => {
+                            const newPin = generatePin();
+                            if (window.confirm(`Regenerate PIN for ${emp}? New: ${newPin}`)) {
+                              await updateEmployeePin(empObj.id, newPin);
+                              showToast(`New PIN for ${emp}: ${newPin}`);
+                            }
+                          }}
+                          className="px-2 py-1 rounded bg-cyan-100 text-cyan-800 font-mono text-xs font-bold hover:bg-cyan-200"
+                        >
+                          {empObj.pin} 🔄
+                        </button>
+                      </td>
 
                       <td className="px-4 py-3">
                         {editing?.employee === emp && editing.field === "checkIn" ? (
@@ -188,15 +201,8 @@ export default function AdminDashboard({ onBack }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="px-2 py-1 border border-cyan-300 rounded text-sm"
                             />
-                            <button onClick={saveEdit} className="text-emerald-600 font-bold">
-                              ✔
-                            </button>
-                            <button
-                              onClick={() => setEditing(null)}
-                              className="text-rose-600 font-bold"
-                            >
-                              ✖
-                            </button>
+                            <button onClick={saveEdit} className="text-emerald-600 font-bold">✔</button>
+                            <button onClick={() => setEditing(null)} className="text-rose-600 font-bold">✖</button>
                           </div>
                         ) : (
                           <button
@@ -217,15 +223,8 @@ export default function AdminDashboard({ onBack }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="px-2 py-1 border border-cyan-300 rounded text-sm"
                             />
-                            <button onClick={saveEdit} className="text-emerald-600 font-bold">
-                              ✔
-                            </button>
-                            <button
-                              onClick={() => setEditing(null)}
-                              className="text-rose-600 font-bold"
-                            >
-                              ✖
-                            </button>
+                            <button onClick={saveEdit} className="text-emerald-600 font-bold">✔</button>
+                            <button onClick={() => setEditing(null)} className="text-rose-600 font-bold">✖</button>
                           </div>
                         ) : (
                           <button
@@ -238,16 +237,14 @@ export default function AdminDashboard({ onBack }) {
                       </td>
 
                       <td className="px-4 py-3">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-semibold border ${badge}`}
-                        >
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${badge}`}>
                           {status}
                         </span>
                       </td>
 
                       <td className="px-4 py-3 text-right">
                         <button
-                          onClick={() => handleDelete(emp)}
+                          onClick={() => handleDelete(empObj.id, emp)}
                           className="text-rose-600 hover:text-rose-800 text-sm font-semibold"
                         >
                           🗑 Delete
@@ -258,7 +255,7 @@ export default function AdminDashboard({ onBack }) {
                 })}
                 {employees.length === 0 && (
                   <tr>
-                    <td colSpan="6" className="text-center py-8 text-cyan-600">
+                    <td colSpan="7" className="text-center py-8 text-cyan-600">
                       No employees yet. Click "Add Employee" to begin.
                     </td>
                   </tr>
@@ -269,7 +266,7 @@ export default function AdminDashboard({ onBack }) {
         </div>
 
         <p className="text-center text-xs text-cyan-600 mt-4">
-          💡 Tip: Click any time value to edit it manually (no time restriction for admin).
+          🔴 Live — check-ins from any device appear here instantly.
         </p>
       </div>
 
@@ -278,7 +275,7 @@ export default function AdminDashboard({ onBack }) {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-cyan-800 text-white px-6 py-3 rounded-xl shadow-2xl animate-float">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-cyan-800 text-white px-6 py-3 rounded-xl shadow-2xl">
           {toast}
         </div>
       )}

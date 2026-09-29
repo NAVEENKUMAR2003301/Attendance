@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import WaterBackground from "./components/WaterBackground";
 import RoleSelect from "./components/RoleSelect";
 import EmployeePortal from "./components/EmployeePortal";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
+import { seedEmployeesIfEmpty } from "./utils/storage";
 
 const PAGES = {
   ROLE: "role",
@@ -15,6 +16,10 @@ const PAGES = {
 export default function App() {
   const [page, setPage] = useState(PAGES.ROLE);
 
+  useEffect(() => {
+    seedEmployeesIfEmpty().catch(console.error);
+  }, []);
+
   const handleRoleSelect = (role) => {
     if (role === "employee") setPage(PAGES.EMPLOYEE);
     else if (role === "admin") setPage(PAGES.ADMIN_LOGIN);
@@ -25,16 +30,10 @@ export default function App() {
   return (
     <WaterBackground>
       {page === PAGES.ROLE && <RoleSelect onSelect={handleRoleSelect} />}
-
       {page === PAGES.EMPLOYEE && <EmployeePortal onBack={goHome} />}
-
       {page === PAGES.ADMIN_LOGIN && (
-        <AdminLogin
-          onSuccess={() => setPage(PAGES.ADMIN_DASH)}
-          onBack={goHome}
-        />
+        <AdminLogin onSuccess={() => setPage(PAGES.ADMIN_DASH)} onBack={goHome} />
       )}
-
       {page === PAGES.ADMIN_DASH && <AdminDashboard onBack={goHome} />}
     </WaterBackground>
   );

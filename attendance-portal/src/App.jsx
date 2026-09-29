@@ -4,7 +4,11 @@ import RoleSelect from "./components/RoleSelect";
 import EmployeePortal from "./components/EmployeePortal";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
-import { seedEmployeesIfEmpty, seedConfigIfEmpty } from "./utils/storage";
+import {
+  seedEmployeesIfEmpty,
+  seedConfigIfEmpty,
+  cleanupOldAttendance,
+} from "./utils/storage";
 
 const PAGES = {
   ROLE: "role",
@@ -12,6 +16,8 @@ const PAGES = {
   ADMIN_LOGIN: "adminLogin",
   ADMIN_DASH: "adminDash",
 };
+
+const LAST_CLEANUP_KEY = "lastCleanup";
 
 export default function App() {
   const [page, setPage] = useState(PAGES.ROLE);
@@ -22,6 +28,20 @@ export default function App() {
       try {
         await seedEmployeesIfEmpty();
         await seedConfigIfEmpty();
+
+        const today = new Date().toISOString().slice(0, 10);
+        const lastClean = localStorage.getItem(LAST_CLEANUP_KEY);
+
+        if (lastClean !== today) {
+          const result = await cleanupOldAttendance();
+          localStorage.setItem(LAST_CLEANUP_KEY, today);
+          if (result.deleted > 0) {
+            console.log(
+              `🧹 Auto-cleanup deleted ${result.deleted} old date(s)`
+            );
+          }
+        }
+
         console.log("🎉 Boot complete");
       } catch (err) {
         console.error("❌ Boot failed:", err);
@@ -38,9 +58,6 @@ export default function App() {
           <div className="text-6xl animate-float">🌊</div>
           <p className="text-cyan-800 font-semibold mt-4">
             Connecting to Firebase...
-          </p>
-          <p className="text-cyan-600 text-sm mt-2">
-            Open F12 console to see logs
           </p>
         </div>
       </WaterBackground>

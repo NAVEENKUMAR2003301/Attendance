@@ -10,8 +10,51 @@ export const DEFAULT_CONFIG = {
   checkOutEnd: "18:45",
 };
 
-// ============ CONFIG ============
+// ============ CLEANUP ============
+export const RETENTION_DAYS = 90;
 
+export const dateKeyDaysAgo = (days) => {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+export const getExpiredDateKeys = async () => {
+  const snap = await get(ref(db, "attendance"));
+  const val = snap.val() || {};
+  const cutoff = dateKeyDaysAgo(RETENTION_DAYS);
+  return Object.keys(val).filter((k) => k < cutoff);
+};
+
+export const deleteAttendanceDate = async (dateKey) => {
+  await set(ref(db, `attendance/${dateKey}`), null);
+  console.log("🗑 Deleted attendance for", dateKey);
+};
+
+export const cleanupOldAttendance = async () => {
+  const expired = await getExpiredDateKeys();
+  if (expired.length === 0) {
+    console.log("✅ No expired records to clean");
+    return { deleted: 0, dates: [] };
+  }
+  for (const dateKey of expired) {
+    await deleteAttendanceDate(dateKey);
+  }
+  console.log(`✅ Cleaned ${expired.length} old dates`);
+  return { deleted: expired.length, dates: expired };
+};
+
+export const previewOldAttendance = async () => getExpiredDateKeys();
+
+export const getAllAttendance = async () => {
+  const snap = await get(ref(db, "attendance"));
+  return snap.val() || {};
+};
+
+// ============ CONFIG ============
 export const seedConfigIfEmpty = async () => {
   const snap = await get(ref(db, "config"));
   if (!snap.exists()) {
@@ -47,7 +90,6 @@ export const saveConfig = async (config) => {
 };
 
 // ============ EMPLOYEES ============
-
 export const seedEmployeesIfEmpty = async () => {
   const snap = await get(ref(db, "employees"));
   if (snap.exists()) return;
@@ -123,7 +165,6 @@ export const generatePin = () =>
   String(Math.floor(1000 + Math.random() * 9000));
 
 // ============ ATTENDANCE ============
-
 export const getTodayKey = () => {
   const d = new Date();
   const y = d.getFullYear();
@@ -134,6 +175,7 @@ export const getTodayKey = () => {
 
 export const setRecord = async (dateKey, employee, patch) => {
   await update(ref(db, `attendance/${dateKey}/${employee}`), patch);
+  console.log("✅ Attendance updated:", dateKey, employee, patch);
 };
 
 export const subscribeAttendance = (dateKey, callback) => {

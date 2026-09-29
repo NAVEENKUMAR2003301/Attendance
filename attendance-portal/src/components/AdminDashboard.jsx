@@ -16,6 +16,7 @@ import { prettyTime } from "../utils/timeUtils";
 import { exportToExcel, importFromExcel } from "../utils/excelUtils";
 import AddEmployeeModal from "./AddEmployeeModal";
 import TimeSettingsModal from "./TimeSettingsModal";
+import CleanupModal from "./CleanupModal";
 
 export default function AdminDashboard({ onBack }) {
   const [employees, setEmployees] = useState([]);
@@ -24,6 +25,7 @@ export default function AdminDashboard({ onBack }) {
   const [attendance, setAttendance] = useState({});
   const [showAdd, setShowAdd] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCleanup, setShowCleanup] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState("");
   const [toast, setToast] = useState("");
@@ -134,6 +136,13 @@ export default function AdminDashboard({ onBack }) {
           </button>
 
           <button
+            onClick={() => setShowCleanup(true)}
+            className="px-4 py-2 rounded-lg bg-rose-500 text-white font-semibold shadow hover:scale-105 transition"
+          >
+            🧹 Clean Old Data
+          </button>
+
+          <button
             onClick={() => fileRef.current?.click()}
             className="px-4 py-2 rounded-lg bg-emerald-500 text-white font-semibold shadow hover:scale-105 transition"
           >
@@ -162,7 +171,6 @@ export default function AdminDashboard({ onBack }) {
           </div>
         </div>
 
-        {/* Config summary */}
         <div className="bg-cyan-50/70 border border-cyan-200 rounded-2xl p-3 mb-6 text-xs text-cyan-800 flex flex-wrap gap-4">
           <span>
             ✅ Check-In:{" "}
@@ -362,6 +370,17 @@ export default function AdminDashboard({ onBack }) {
           config={config}
           onClose={() => setShowSettings(false)}
           onSave={handleSaveSettings}
+        />
+      )}
+
+      {showCleanup && (
+        <CleanupModal
+          onClose={() => setShowCleanup(false)}
+          onDone={(count) => {
+            showToast(
+              count > 0 ? `Deleted ${count} old date(s)` : "Nothing to clean"
+            );
+          }}
         />
       )}
 

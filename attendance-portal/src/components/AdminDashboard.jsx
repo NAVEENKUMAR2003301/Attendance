@@ -2,34 +2,42 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   subscribeEmployees,
   subscribeAttendance,
+  subscribeConfig,
   addEmployee,
   deleteEmployee,
   setRecord,
   getTodayKey,
   updateEmployeePin,
   generatePin,
+  saveConfig,
+  DEFAULT_CONFIG,
 } from "../utils/storage";
 import { prettyTime } from "../utils/timeUtils";
 import { exportToExcel, importFromExcel } from "../utils/excelUtils";
 import AddEmployeeModal from "./AddEmployeeModal";
+import TimeSettingsModal from "./TimeSettingsModal";
 
 export default function AdminDashboard({ onBack }) {
   const [employees, setEmployees] = useState([]);
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [date, setDate] = useState(getTodayKey());
   const [attendance, setAttendance] = useState({});
   const [showAdd, setShowAdd] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState("");
   const [toast, setToast] = useState("");
   const fileRef = useRef();
 
-  // LIVE employees
   useEffect(() => {
-    const unsub = subscribeEmployees(setEmployees);
-    return () => unsub();
+    const u1 = subscribeEmployees(setEmployees);
+    const u2 = subscribeConfig(setConfig);
+    return () => {
+      u1();
+      u2();
+    };
   }, []);
 
-  // LIVE attendance (real-time sync from all devices)
   useEffect(() => {
     const unsub = subscribeAttendance(date, setAttendance);
     return () => unsub();
@@ -78,11 +86,20 @@ export default function AdminDashboard({ onBack }) {
     e.target.value = "";
   };
 
+  const handleSaveSettings = async (newConfig) => {
+    await saveConfig(newConfig);
+    setShowSettings(false);
+    showToast("Settings saved");
+  };
+
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="max-w-6xl mx-auto">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <button onClick={onBack} className="text-cyan-700 hover:text-cyan-900 font-semibold">
+          <button
+            onClick={onBack}
+            className="text-cyan-700 hover:text-cyan-900 font-semibold"
+          >
             ← Logout
           </button>
           <h1 className="text-3xl md:text-4xl font-bold text-cyan-800 text-center flex-1">
@@ -110,6 +127,13 @@ export default function AdminDashboard({ onBack }) {
           </button>
 
           <button
+            onClick={() => setShowSettings(true)}
+            className="px-4 py-2 rounded-lg bg-amber-500 text-white font-semibold shadow hover:scale-105 transition"
+          >
+            ⚙️ Time Settings
+          </button>
+
+          <button
             onClick={() => fileRef.current?.click()}
             className="px-4 py-2 rounded-lg bg-emerald-500 text-white font-semibold shadow hover:scale-105 transition"
           >
@@ -132,8 +156,27 @@ export default function AdminDashboard({ onBack }) {
 
           <div className="ml-auto flex items-center gap-2 text-sm text-cyan-700">
             <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            <span>Live · Total: <b>{employees.length}</b></span>
+            <span>
+              Live · Total: <b>{employees.length}</b>
+            </span>
           </div>
+        </div>
+
+        {/* Config summary */}
+        <div className="bg-cyan-50/70 border border-cyan-200 rounded-2xl p-3 mb-6 text-xs text-cyan-800 flex flex-wrap gap-4">
+          <span>
+            ✅ Check-In:{" "}
+            <b>
+              {prettyTime(config.checkInStart)} – {prettyTime(config.checkInEnd)}
+            </b>
+          </span>
+          <span>
+            🚪 Check-Out:{" "}
+            <b>
+              {prettyTime(config.checkOutStart)} –{" "}
+              {prettyTime(config.checkOutEnd)}
+            </b>
+          </span>
         </div>
 
         <div className="bg-white/70 backdrop-blur-md border border-cyan-200 rounded-2xl shadow-xl overflow-hidden">
@@ -147,7 +190,9 @@ export default function AdminDashboard({ onBack }) {
                   <th className="px-4 py-3 text-sm font-semibold">Check In</th>
                   <th className="px-4 py-3 text-sm font-semibold">Check Out</th>
                   <th className="px-4 py-3 text-sm font-semibold">Status</th>
-                  <th className="px-4 py-3 text-sm font-semibold text-right">Actions</th>
+                  <th className="px-4 py-3 text-sm font-semibold text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -174,14 +219,22 @@ export default function AdminDashboard({ onBack }) {
                         i % 2 ? "bg-white/40" : "bg-white/20"
                       }`}
                     >
-                      <td className="px-4 py-3 text-cyan-700 text-sm">{i + 1}</td>
-                      <td className="px-4 py-3 font-semibold text-cyan-900">{emp}</td>
+                      <td className="px-4 py-3 text-cyan-700 text-sm">
+                        {i + 1}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-cyan-900">
+                        {emp}
+                      </td>
 
                       <td className="px-4 py-3">
                         <button
                           onClick={async () => {
                             const newPin = generatePin();
-                            if (window.confirm(`Regenerate PIN for ${emp}? New: ${newPin}`)) {
+                            if (
+                              window.confirm(
+                                `Regenerate PIN for ${emp}? New: ${newPin}`
+                              )
+                            ) {
                               await updateEmployeePin(empObj.id, newPin);
                               showToast(`New PIN for ${emp}: ${newPin}`);
                             }
@@ -193,7 +246,8 @@ export default function AdminDashboard({ onBack }) {
                       </td>
 
                       <td className="px-4 py-3">
-                        {editing?.employee === emp && editing.field === "checkIn" ? (
+                        {editing?.employee === emp &&
+                        editing.field === "checkIn" ? (
                           <div className="flex gap-1">
                             <input
                               type="time"
@@ -201,8 +255,18 @@ export default function AdminDashboard({ onBack }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="px-2 py-1 border border-cyan-300 rounded text-sm"
                             />
-                            <button onClick={saveEdit} className="text-emerald-600 font-bold">✔</button>
-                            <button onClick={() => setEditing(null)} className="text-rose-600 font-bold">✖</button>
+                            <button
+                              onClick={saveEdit}
+                              className="text-emerald-600 font-bold"
+                            >
+                              ✔
+                            </button>
+                            <button
+                              onClick={() => setEditing(null)}
+                              className="text-rose-600 font-bold"
+                            >
+                              ✖
+                            </button>
                           </div>
                         ) : (
                           <button
@@ -215,7 +279,8 @@ export default function AdminDashboard({ onBack }) {
                       </td>
 
                       <td className="px-4 py-3">
-                        {editing?.employee === emp && editing.field === "checkOut" ? (
+                        {editing?.employee === emp &&
+                        editing.field === "checkOut" ? (
                           <div className="flex gap-1">
                             <input
                               type="time"
@@ -223,8 +288,18 @@ export default function AdminDashboard({ onBack }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               className="px-2 py-1 border border-cyan-300 rounded text-sm"
                             />
-                            <button onClick={saveEdit} className="text-emerald-600 font-bold">✔</button>
-                            <button onClick={() => setEditing(null)} className="text-rose-600 font-bold">✖</button>
+                            <button
+                              onClick={saveEdit}
+                              className="text-emerald-600 font-bold"
+                            >
+                              ✔
+                            </button>
+                            <button
+                              onClick={() => setEditing(null)}
+                              className="text-rose-600 font-bold"
+                            >
+                              ✖
+                            </button>
                           </div>
                         ) : (
                           <button
@@ -237,7 +312,9 @@ export default function AdminDashboard({ onBack }) {
                       </td>
 
                       <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${badge}`}>
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-semibold border ${badge}`}
+                        >
                           {status}
                         </span>
                       </td>
@@ -255,7 +332,10 @@ export default function AdminDashboard({ onBack }) {
                 })}
                 {employees.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="text-center py-8 text-cyan-600">
+                    <td
+                      colSpan="7"
+                      className="text-center py-8 text-cyan-600"
+                    >
                       No employees yet. Click "Add Employee" to begin.
                     </td>
                   </tr>
@@ -266,12 +346,23 @@ export default function AdminDashboard({ onBack }) {
         </div>
 
         <p className="text-center text-xs text-cyan-600 mt-4">
-          🔴 Live — check-ins from any device appear here instantly.
+          🔴 Live — updates from any device appear here instantly.
         </p>
       </div>
 
       {showAdd && (
-        <AddEmployeeModal onClose={() => setShowAdd(false)} onAdd={handleAddEmployee} />
+        <AddEmployeeModal
+          onClose={() => setShowAdd(false)}
+          onAdd={handleAddEmployee}
+        />
+      )}
+
+      {showSettings && (
+        <TimeSettingsModal
+          config={config}
+          onClose={() => setShowSettings(false)}
+          onSave={handleSaveSettings}
+        />
       )}
 
       {toast && (

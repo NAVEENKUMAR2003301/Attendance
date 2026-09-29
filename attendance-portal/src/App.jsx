@@ -4,7 +4,7 @@ import RoleSelect from "./components/RoleSelect";
 import EmployeePortal from "./components/EmployeePortal";
 import AdminLogin from "./components/AdminLogin";
 import AdminDashboard from "./components/AdminDashboard";
-import { seedEmployeesIfEmpty } from "./utils/storage";
+import { seedEmployeesIfEmpty, seedConfigIfEmpty } from "./utils/storage";
 
 const PAGES = {
   ROLE: "role",
@@ -15,23 +15,23 @@ const PAGES = {
 
 export default function App() {
   const [page, setPage] = useState(PAGES.ROLE);
-  const [seeding, setSeeding] = useState(true);
+  const [booting, setBooting] = useState(true);
 
   useEffect(() => {
-    console.log("🚀 App mounted — attempting to seed employees...");
-    seedEmployeesIfEmpty()
-      .then(() => {
-        console.log("🎉 Seed complete");
-        setSeeding(false);
-      })
-      .catch((err) => {
-        console.error("❌ SEED FAILED:", err);
-        console.error("👉 Check: databaseURL in firebase.js, DB created, rules set to test mode");
-        setSeeding(false);
-      });
+    (async () => {
+      try {
+        await seedEmployeesIfEmpty();
+        await seedConfigIfEmpty();
+        console.log("🎉 Boot complete");
+      } catch (err) {
+        console.error("❌ Boot failed:", err);
+      } finally {
+        setBooting(false);
+      }
+    })();
   }, []);
 
-  if (seeding) {
+  if (booting) {
     return (
       <WaterBackground>
         <div className="min-h-screen flex flex-col items-center justify-center">
@@ -40,7 +40,7 @@ export default function App() {
             Connecting to Firebase...
           </p>
           <p className="text-cyan-600 text-sm mt-2">
-            Open browser console (F12) to see logs
+            Open F12 console to see logs
           </p>
         </div>
       </WaterBackground>
@@ -59,7 +59,10 @@ export default function App() {
       {page === PAGES.ROLE && <RoleSelect onSelect={handleRoleSelect} />}
       {page === PAGES.EMPLOYEE && <EmployeePortal onBack={goHome} />}
       {page === PAGES.ADMIN_LOGIN && (
-        <AdminLogin onSuccess={() => setPage(PAGES.ADMIN_DASH)} onBack={goHome} />
+        <AdminLogin
+          onSuccess={() => setPage(PAGES.ADMIN_DASH)}
+          onBack={goHome}
+        />
       )}
       {page === PAGES.ADMIN_DASH && <AdminDashboard onBack={goHome} />}
     </WaterBackground>

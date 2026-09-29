@@ -5,12 +5,15 @@ import {
   setRecord,
   getTodayKey,
   verifyPin,
+  subscribeConfig,
+  DEFAULT_CONFIG,
 } from "../utils/storage";
 import {
   isCheckInWindow,
   isCheckOutWindow,
   formatTime,
   prettyTime,
+  prettyWindow,
 } from "../utils/timeUtils";
 
 export default function EmployeePortal({ onBack }) {
@@ -20,12 +23,26 @@ export default function EmployeePortal({ onBack }) {
   const [verified, setVerified] = useState(false);
   const [pinError, setPinError] = useState("");
   const [record, setLocalRecord] = useState({ checkIn: null, checkOut: null });
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(false);
+  const [tick, setTick] = useState(0);
 
   const todayKey = getTodayKey();
 
   useEffect(() => {
     getEmployeeNames().then(setEmployees).catch(console.error);
+  }, []);
+
+  // Live config from Firebase
+  useEffect(() => {
+    const unsub = subscribeConfig(setConfig);
+    return () => unsub();
+  }, []);
+
+  // live clock tick for window re-evaluation
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -35,7 +52,7 @@ export default function EmployeePortal({ onBack }) {
     if (selected) {
       getRecord(todayKey, selected).then(setLocalRecord).catch(console.error);
     }
-  }, [selected, todayKey]);
+  }, [selected, todayKey, tick]);
 
   const handleVerify = async (e) => {
     e.preventDefault();
@@ -61,24 +78,31 @@ export default function EmployeePortal({ onBack }) {
     setLocalRecord(await getRecord(todayKey, selected));
   };
 
-  const canCheckIn = isCheckInWindow();
-  const canCheckOut = isCheckOutWindow();
+  const canCheckIn = isCheckInWindow(config);
+  const canCheckOut = isCheckOutWindow(config);
   const now = new Date().toLocaleTimeString("en-IN", { hour12: true });
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-xl">
-        <button onClick={onBack} className="mb-6 text-cyan-700 hover:text-cyan-900 font-semibold">
+        <button
+          onClick={onBack}
+          className="mb-6 text-cyan-700 hover:text-cyan-900 font-semibold"
+        >
           ← Back
         </button>
 
         <div className="bg-white/70 backdrop-blur-md border border-cyan-200 rounded-3xl shadow-2xl p-8">
-          <h1 className="text-3xl font-bold text-cyan-800 mb-1">Employee Portal</h1>
+          <h1 className="text-3xl font-bold text-cyan-800 mb-1">
+            Employee Portal
+          </h1>
           <p className="text-cyan-600 mb-6 text-sm">
             Now: <span className="font-semibold">{now}</span>
           </p>
 
-          <label className="block text-cyan-800 font-semibold mb-2">Select Your Name</label>
+          <label className="block text-cyan-800 font-semibold mb-2">
+            Select Your Name
+          </label>
           <select
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
@@ -86,7 +110,9 @@ export default function EmployeePortal({ onBack }) {
           >
             <option value="">-- Choose Employee --</option>
             {employees.map((e) => (
-              <option key={e} value={e}>{e}</option>
+              <option key={e} value={e}>
+                {e}
+              </option>
             ))}
           </select>
 
@@ -121,7 +147,11 @@ export default function EmployeePortal({ onBack }) {
                   {loading ? "..." : "Verify"}
                 </button>
               </div>
-              {pinError && <p className="text-rose-600 text-sm mt-2 font-semibold">{pinError}</p>}
+              {pinError && (
+                <p className="text-rose-600 text-sm mt-2 font-semibold">
+                  {pinError}
+                </p>
+              )}
             </form>
           )}
 
@@ -133,12 +163,20 @@ export default function EmployeePortal({ onBack }) {
 
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="bg-cyan-50/80 border border-cyan-200 rounded-2xl p-4 text-center">
-                  <div className="text-xs text-cyan-600 font-semibold uppercase">Check In</div>
-                  <div className="text-xl font-bold text-cyan-900 mt-1">{prettyTime(record.checkIn)}</div>
+                  <div className="text-xs text-cyan-600 font-semibold uppercase">
+                    Check In
+                  </div>
+                  <div className="text-xl font-bold text-cyan-900 mt-1">
+                    {prettyTime(record.checkIn)}
+                  </div>
                 </div>
                 <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-4 text-center">
-                  <div className="text-xs text-blue-600 font-semibold uppercase">Check Out</div>
-                  <div className="text-xl font-bold text-blue-900 mt-1">{prettyTime(record.checkOut)}</div>
+                  <div className="text-xs text-blue-600 font-semibold uppercase">
+                    Check Out
+                  </div>
+                  <div className="text-xl font-bold text-blue-900 mt-1">
+                    {prettyTime(record.checkOut)}
+                  </div>
                 </div>
               </div>
 
@@ -177,13 +215,29 @@ export default function EmployeePortal({ onBack }) {
               )}
 
               <div className="mt-6 text-xs text-cyan-700 space-y-1">
-                <p>• Check-In: <b>09:15 AM – 09:45 AM</b></p>
-                <p>• Check-Out: <b>06:15 PM – 06:45 PM</b></p>
+                <p>
+                  • Check-In:{" "}
+                  <b>
+                    {prettyWindow(config.checkInStart, config.checkInEnd)}
+                  </b>
+                </p>
+                <p>
+                  • Check-Out:{" "}
+                  <b>
+                    {prettyWindow(config.checkOutStart, config.checkOutEnd)}
+                  </b>
+                </p>
                 {!canCheckIn && !record.checkIn && (
-                  <p className="text-rose-600 font-semibold mt-2">⚠️ Check-in only 9:15–9:45 AM.</p>
+                  <p className="text-rose-600 font-semibold mt-2">
+                    ⚠️ Check-in is only allowed between{" "}
+                    {prettyWindow(config.checkInStart, config.checkInEnd)}.
+                  </p>
                 )}
                 {record.checkIn && !record.checkOut && !canCheckOut && (
-                  <p className="text-rose-600 font-semibold mt-2">⚠️ Check-out only 6:15–6:45 PM.</p>
+                  <p className="text-rose-600 font-semibold mt-2">
+                    ⚠️ Check-out is only allowed between{" "}
+                    {prettyWindow(config.checkOutStart, config.checkOutEnd)}.
+                  </p>
                 )}
               </div>
             </>

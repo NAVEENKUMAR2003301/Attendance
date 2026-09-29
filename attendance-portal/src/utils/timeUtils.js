@@ -1,24 +1,23 @@
-// Check-in window: 09:15 – 09:45
-// Check-out window: 18:15 – 18:45
-export const CHECK_IN_START = 9 * 60 + 15;   // 555
-export const CHECK_IN_END = 9 * 60 + 45;     // 585
-export const CHECK_OUT_START = 18 * 60 + 15; // 1095
-export const CHECK_OUT_END = 18 * 60 + 45;   // 1125
+// Convert "HH:MM" → minutes since midnight
+export const toMinutes = (hhmm) => {
+  if (!hhmm) return 0;
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
 
 export const nowInMinutes = () => {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 };
 
-export const isCheckInWindow = () => {
-  const m = nowInMinutes();
-  return m >= CHECK_IN_START && m <= CHECK_IN_END;
-};
+export const isWithin = (now, start, end) =>
+  now >= toMinutes(start) && now <= toMinutes(end);
 
-export const isCheckOutWindow = () => {
-  const m = nowInMinutes();
-  return m >= CHECK_OUT_START && m <= CHECK_OUT_END;
-};
+export const isCheckInWindow = (config) =>
+  isWithin(nowInMinutes(), config.checkInStart, config.checkInEnd);
+
+export const isCheckOutWindow = (config) =>
+  isWithin(nowInMinutes(), config.checkOutStart, config.checkOutEnd);
 
 export const formatTime = (date = new Date()) => {
   const h = String(date.getHours()).padStart(2, "0");
@@ -33,3 +32,6 @@ export const prettyTime = (t) => {
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${String(hh).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ampm}`;
 };
+
+export const prettyWindow = (start, end) =>
+  `${prettyTime(start)} – ${prettyTime(end)}`;

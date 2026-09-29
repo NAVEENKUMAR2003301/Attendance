@@ -2,15 +2,55 @@ import { ref, get, set, update, onValue } from "firebase/database";
 import { db } from "../firebase";
 import { DEFAULT_EMPLOYEES } from "../data/employees";
 
+// ============ DEFAULT CONFIG ============
+export const DEFAULT_CONFIG = {
+  checkInStart: "09:15",
+  checkInEnd: "09:45",
+  checkOutStart: "18:15",
+  checkOutEnd: "18:45",
+};
+
+// ============ CONFIG ============
+
+export const seedConfigIfEmpty = async () => {
+  const snap = await get(ref(db, "config"));
+  if (!snap.exists()) {
+    await set(ref(db, "config"), DEFAULT_CONFIG);
+    console.log("✅ Seeded default config");
+  }
+};
+
+export const subscribeConfig = (callback) => {
+  const r = ref(db, "config");
+  return onValue(
+    r,
+    (snap) => {
+      const val = snap.val();
+      callback(val ? { ...DEFAULT_CONFIG, ...val } : DEFAULT_CONFIG);
+    },
+    (err) => {
+      console.error("❌ subscribeConfig error:", err);
+      callback(DEFAULT_CONFIG);
+    }
+  );
+};
+
+export const getConfig = async () => {
+  const snap = await get(ref(db, "config"));
+  const val = snap.val();
+  return val ? { ...DEFAULT_CONFIG, ...val } : DEFAULT_CONFIG;
+};
+
+export const saveConfig = async (config) => {
+  await set(ref(db, "config"), config);
+  console.log("✅ Config saved:", config);
+};
+
 // ============ EMPLOYEES ============
 
 export const seedEmployeesIfEmpty = async () => {
   const snap = await get(ref(db, "employees"));
-  if (snap.exists()) {
-    console.log("✅ Employees already exist in Firebase");
-    return;
-  }
-  console.log("🌱 Seeding employees to Firebase...");
+  if (snap.exists()) return;
   const payload = {};
   DEFAULT_EMPLOYEES.forEach((emp, idx) => {
     const id = String(Date.now() + idx);
@@ -26,22 +66,16 @@ export const subscribeEmployees = (callback) => {
     r,
     (snap) => {
       const val = snap.val();
-      if (!val) {
-        console.log("⚠️ No employees in Firebase yet");
-        callback([]);
-        return;
-      }
-      // Convert object → array with id
+      if (!val) return callback([]);
       const arr = Object.entries(val).map(([id, data]) => ({
         id,
         name: data.name,
         pin: data.pin,
       }));
-      console.log("📋 Employees loaded:", arr.length);
       callback(arr);
     },
     (err) => {
-      console.error("❌ subscribeEmployees error:", err);
+      console.error("❌ subscribeEmployees:", err);
       callback([]);
     }
   );
@@ -50,33 +84,27 @@ export const subscribeEmployees = (callback) => {
 export const getEmployeeNames = async () => {
   const snap = await get(ref(db, "employees"));
   const val = snap.val();
-  if (!val) return [];
-  return Object.values(val).map((e) => e.name);
+  return val ? Object.values(val).map((e) => e.name) : [];
 };
 
 export const addEmployee = async (name, pin) => {
   const trimmed = name.trim();
   if (!trimmed) return;
-
   const snap = await get(ref(db, "employees"));
   const val = snap.val() || {};
   const exists = Object.values(val).some(
     (e) => e.name.toLowerCase() === trimmed.toLowerCase()
   );
-  if (exists) {
-    console.log("⚠️ Employee already exists:", trimmed);
-    return;
-  }
-
+  if (exists) return;
   const id = String(Date.now());
-  const newPin = pin || generatePin();
-  await set(ref(db, `employees/${id}`), { name: trimmed, pin: newPin });
-  console.log("✅ Added employee:", trimmed, "PIN:", newPin);
+  await set(ref(db, `employees/${id}`), {
+    name: trimmed,
+    pin: pin || generatePin(),
+  });
 };
 
 export const deleteEmployee = async (id) => {
   await set(ref(db, `employees/${id}`), null);
-  console.log("🗑 Deleted employee:", id);
 };
 
 export const updateEmployeePin = async (id, newPin) => {
@@ -106,7 +134,6 @@ export const getTodayKey = () => {
 
 export const setRecord = async (dateKey, employee, patch) => {
   await update(ref(db, `attendance/${dateKey}/${employee}`), patch);
-  console.log("✅ Attendance updated:", dateKey, employee, patch);
 };
 
 export const subscribeAttendance = (dateKey, callback) => {
@@ -115,7 +142,7 @@ export const subscribeAttendance = (dateKey, callback) => {
     r,
     (snap) => callback(snap.val() || {}),
     (err) => {
-      console.error("❌ subscribeAttendance error:", err);
+      console.error("❌ subscribeAttendance:", err);
       callback({});
     }
   );

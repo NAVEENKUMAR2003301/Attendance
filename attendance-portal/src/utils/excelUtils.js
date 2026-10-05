@@ -13,6 +13,7 @@ const prettyDate = (dateKey) => {
   return `${d}-${months[Number(m) - 1]}-${y}`;
 };
 
+// ---------- Single-day export (unchanged) ----------
 export const exportToExcel = (dateKey, employees, attendance) => {
   const dayData = attendance || {};
 
@@ -37,13 +38,8 @@ export const exportToExcel = (dateKey, employees, attendance) => {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws["!cols"] = [
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 28 },
-    { wch: 8 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 10 },
+    { wch: 12 }, { wch: 14 }, { wch: 28 }, { wch: 8 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 },
   ];
 
   const wb = XLSX.utils.book_new();
@@ -51,6 +47,64 @@ export const exportToExcel = (dateKey, employees, attendance) => {
   XLSX.writeFile(wb, `attendance-${dateKey}.xlsx`);
 };
 
+// ---------- NEW: Range export ----------
+export const exportRangeToExcel = (
+  fromDate,
+  toDate,
+  employees,
+  allAttendanceByDate
+) => {
+  const rows = [];
+
+  // Iterate all dates inside [fromDate, toDate]
+  Object.entries(allAttendanceByDate || {}).forEach(([dateKey, dayData]) => {
+    if (dateKey < fromDate || dateKey > toDate) return; // outside range
+
+    employees.forEach((empObj) => {
+      const emp = empObj.name;
+      const rec = dayData?.[emp] || {};
+      // Include row only if there's a record
+      if (!rec.checkIn && !rec.checkOut) return;
+
+      rows.push({
+        Date: dateKey,
+        "Date (Pretty)": prettyDate(dateKey),
+        Employee: emp,
+        PIN: empObj.pin || "",
+        "Check In": prettyTime(rec.checkIn),
+        "Check Out": prettyTime(rec.checkOut),
+        Status:
+          rec.checkIn && rec.checkOut
+            ? "Present"
+            : rec.checkIn
+            ? "Working"
+            : "Absent",
+      });
+    });
+  });
+
+  // Sort by date, then employee
+  rows.sort((a, b) => {
+    if (a.Date !== b.Date) return a.Date.localeCompare(b.Date);
+    return a.Employee.localeCompare(b.Employee);
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [
+    { wch: 12 }, { wch: 14 }, { wch: 28 }, { wch: 8 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Attendance");
+
+  const filename = `attendance-${fromDate}_to_${toDate}.xlsx`;
+  XLSX.writeFile(wb, filename);
+
+  return { rows: rows.length, filename };
+};
+
+// ---------- Backup export (for cleanup) ----------
 export const exportHistoryBackup = (allAttendance) => {
   const rows = [];
   Object.entries(allAttendance || {}).forEach(([dateKey, dayData]) => {
@@ -76,12 +130,8 @@ export const exportHistoryBackup = (allAttendance) => {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws["!cols"] = [
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 28 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 10 },
+    { wch: 12 }, { wch: 14 }, { wch: 28 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Backup");
@@ -89,6 +139,7 @@ export const exportHistoryBackup = (allAttendance) => {
   XLSX.writeFile(wb, `attendance-backup-${stamp}.xlsx`);
 };
 
+// ---------- Import (unchanged) ----------
 export const importFromExcel = (file, dateKey) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();

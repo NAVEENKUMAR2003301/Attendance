@@ -194,3 +194,91 @@ export const getRecord = async (dateKey, employee) => {
   const snap = await get(ref(db, `attendance/${dateKey}/${employee}`));
   return snap.val() || { checkIn: null, checkOut: null };
 };
+
+// Subscribe to ALL attendance history (for range export)
+export const subscribeAllAttendance = (callback) => {
+  const r = ref(db, "attendance");
+  return onValue(
+    r,
+    (snap) => callback(snap.val() || {}),
+    (err) => {
+      console.error("❌ subscribeAllAttendance:", err);
+      callback({});
+    }
+  );
+};
+
+
+// ============ EMPLOYEE REPORT ============
+
+// Returns array of { date, checkIn, checkOut, hours, status } for a range
+export const getEmployeeReport = (allAttendance, employeeName, fromDate, toDate) => {
+  const rows = [];
+
+  Object.entries(allAttendance || {}).forEach(([dateKey, dayData]) => {
+    if (dateKey < fromDate || dateKey > toDate) return;
+    const rec = dayData?.[employeeName];
+    if (!rec) return;
+
+    const hours = computeHours(rec.checkIn, rec.checkOut);
+    rows.push({
+      date: dateKey,
+      checkIn: rec.checkIn,
+      checkOut: rec.checkOut,
+      hours,
+      status:
+        rec.checkIn && rec.checkOut
+          ? "Present"
+          : rec.checkIn
+          ? "Working"
+          : "Absent",
+    });
+  });
+
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return rows;
+};
+
+// Compute hours between two "HH:MM" strings
+export const computeHours = (checkIn, checkOut) => {
+  if (!checkIn || !checkOut) return 0;
+  const [h1, m1] = checkIn.split(":").map(Number);
+  const [h2, m2] = checkOut.split(":").map(Number);
+  const mins = h2 * 60 + m2 - (h1 * 60 + m1);
+  if (mins <= 0) return 0;
+  return +(mins / 60).toFixed(2);
+};
+
+// Date range helpers
+export const getWeekRange = () => {
+  const now = new Date();
+  const day = now.getDay(); // 0 = Sun
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((day + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    from: monday.toISOString().slice(0, 10),
+    to: sunday.toISOString().slice(0, 10),
+  };
+};
+
+export const getMonthRange = () => {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return {
+    from: first.toISOString().slice(0, 10),
+    to: last.toISOString().slice(0, 10),
+  };
+};
+
+export const getLast30DaysRange = () => {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 29);
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  };
+};

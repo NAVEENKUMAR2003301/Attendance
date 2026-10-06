@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   subscribeEmployees,
   subscribeAttendance,
@@ -9,11 +9,13 @@ import {
   setRecord,
   getTodayKey,
   updateEmployeeEmpId,
+  updateEmployeePoc,
   generateNextEmpId,
   saveConfig,
   DEFAULT_CONFIG,
-  dedupeEmployees,          // 👈 new
+  dedupeEmployees,
   removeDuplicateEmployees,
+  getUniquePocs,
 } from "../utils/storage";
 import { prettyTime } from "../utils/timeUtils";
 import { exportToExcel, importFromExcel } from "../utils/excelUtils";
@@ -22,6 +24,7 @@ import TimeSettingsModal from "./TimeSettingsModal";
 import CleanupModal from "./CleanupModal";
 import ExportRangeModal from "./ExportRangeModal";
 import EmployeeReportModal from "./EmployeeReportModal";
+import StatDetailsModal from "./StatDetailsModal";
 
 export default function AdminDashboard({ onBack }) {
   const [employees, setEmployees] = useState([]);
@@ -34,15 +37,14 @@ export default function AdminDashboard({ onBack }) {
   const [showCleanup, setShowCleanup] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [reportEmployee, setReportEmployee] = useState(null);
+  const [statFilter, setStatFilter] = useState(null);
+  const [pocFilter, setPocFilter] = useState("all"); // "all" | poc name
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState("");
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
   const fileRef = useRef();
-// Compute unique employees (removes visual duplicates)
-const { unique: uniqueEmployees, duplicates: duplicateList } =
-  React.useMemo(() => dedupeEmployees(employees), [employees]);
-  
+
   useEffect(() => {
     const u1 = subscribeEmployees(setEmployees);
     const u2 = subscribeConfig(setConfig);
@@ -61,6 +63,18 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
     const unsub = subscribeAllAttendance(setAllAttendance);
     return () => unsub();
   }, []);
+
+  // ---------- Duplicate handling ----------
+  const { unique: uniqueEmployees, duplicates: duplicateList } = useMemo(
+    () => dedupeEmployees(employees),
+    [employees]
+  );
+
+  // ---------- POC list ----------
+  const pocList = useMemo(
+    () => getUniquePocs(uniqueEmployees),
+    [uniqueEmployees]
+  );
 
   const showToast = (msg) => {
     setToast(msg);
@@ -82,9 +96,9 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
     showToast(`Updated ${employee}'s ${field}`);
   };
 
- const handleAddEmployee = async (name, pin) => {
-  await addEmployee(name, pin);
-};
+  const handleAddEmployee = async (name, empId, poc) => {
+    await addEmployee(name, empId, poc);
+  };
 
   const handleDelete = async (id, name) => {
     if (!window.confirm(`Delete ${name}?`)) return;
@@ -110,20 +124,42 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
     showToast("Settings saved");
   };
 
-  // ---------- stats ----------
-  const totalEmp = employees.length;
-  const presentCount = employees.filter((e) => {
+  const handleRemoveDupes = async () => {
+    if (duplicateList.length === 0) return;
+    if (
+      !window.confirm(
+        `Remove ${duplicateList.length} duplicate employee${
+          duplicateList.length !== 1 ? "s" : ""
+        }? This cannot be undone.`
+      )
+    )
+      return;
+    const result = await removeDuplicateEmployees();
+    showToast(`Removed ${result.removed} duplicate(s)`);
+  };
+
+  // ---------- POC filtering ----------
+  const pocFilteredEmployees = useMemo(() => {
+    if (pocFilter === "all") return uniqueEmployees;
+    return uniqueEmployees.filter(
+      (e) => (e.poc || "").toLowerCase() === pocFilter.toLowerCase()
+    );
+  }, [uniqueEmployees, pocFilter]);
+
+  // ---------- stats (scoped to selected POC) ----------
+  const totalEmp = pocFilteredEmployees.length;
+  const presentCount = pocFilteredEmployees.filter((e) => {
     const r = dayData[e.name];
     return r?.checkIn && r?.checkOut;
   }).length;
-  const workingCount = employees.filter((e) => {
+  const workingCount = pocFilteredEmployees.filter((e) => {
     const r = dayData[e.name];
     return r?.checkIn && !r?.checkOut;
   }).length;
   const absentCount = totalEmp - presentCount - workingCount;
 
-  // ---------- filtered list ----------
-  const filtered = employees.filter((e) =>
+  // ---------- filtered list (search within POC) ----------
+  const filtered = pocFilteredEmployees.filter((e) =>
     e.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -171,13 +207,92 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
           </div>
         </div>
 
+        {/* ============ DUPLICATE WARNING ============ */}
+        {duplicateList.length > 0 && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 flex items-center gap-3 flex-wrap">
+            <span className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold shadow">
+              !
+            </span>
+            <div className="flex-1 min-w-[200px]">
+              <div className="text-sm font-bold text-amber-900">
+                {duplicateList.length} duplicate employee
+                {duplicateList.length !== 1 ? "s" : ""} detected
+              </div>
+              <div className="text-xs text-amber-700">
+                Duplicate names:{" "}
+                {[...new Set(duplicateList.map((d) => d.name))].join(", ")}
+              </div>
+            </div>
+            <button
+              onClick={handleRemoveDupes}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold text-sm shadow-lg hover:scale-105 transition"
+            >
+              🧹 Clean Now
+            </button>
+          </div>
+        )}
+
         {/* ============ STAT CARDS ============ */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <StatCard label="Total Employees" value={totalEmp} icon="👥" color="cyan" />
-          <StatCard label="Present" value={presentCount} icon="✅" color="emerald" />
-          <StatCard label="Working" value={workingCount} icon="⏳" color="amber" />
-          <StatCard label="Absent" value={absentCount} icon="❌" color="rose" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <StatCard
+            label={
+              pocFilter === "all"
+                ? "Total Employees"
+                : `${pocFilter} Team`
+            }
+            value={totalEmp}
+            icon="👥"
+            color="cyan"
+          />
+          <StatCard
+            label="Present"
+            value={presentCount}
+            icon="✅"
+            color="emerald"
+            onClick={() => setStatFilter("Present")}
+          />
+          <StatCard
+            label="Working"
+            value={workingCount}
+            icon="⏳"
+            color="amber"
+            onClick={() => setStatFilter("Working")}
+          />
+          <StatCard
+            label="Absent"
+            value={absentCount}
+            icon="❌"
+            color="rose"
+            onClick={() => setStatFilter("Absent")}
+          />
         </div>
+
+        {/* ============ POC FILTER CHIPS ============ */}
+        {pocList.length > 0 && (
+          <div className="bg-white/70 backdrop-blur-xl border border-white/60 rounded-2xl shadow-lg p-4 mb-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-xs font-bold text-cyan-700 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-base">👥</span>
+                POC:
+              </span>
+              <PocChip
+                label={`All (${uniqueEmployees.length})`}
+                active={pocFilter === "all"}
+                onClick={() => setPocFilter("all")}
+                color="cyan"
+              />
+              {pocList.map((p) => (
+                <PocChip
+                  key={p.display}
+                  label={`${p.display} (${p.count})`}
+                  active={pocFilter === p.display}
+                  onClick={() => setPocFilter(p.display)}
+                  color="cyan"
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ============ TOOLBAR ============ */}
         <div className="bg-white/70 backdrop-blur-xl border border-white/60 rounded-2xl shadow-lg p-4 mb-4">
@@ -242,9 +357,16 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
               label="Clean"
               color="from-rose-500 to-pink-600"
             />
+            {duplicateList.length > 0 && (
+              <ToolbarButton
+                onClick={handleRemoveDupes}
+                icon="⚠️"
+                label={`Dupes (${duplicateList.length})`}
+                color="from-amber-500 to-rose-500"
+              />
+            )}
           </div>
 
-          {/* Config summary */}
           <div className="mt-4 pt-4 border-t border-cyan-100 flex flex-wrap gap-4 text-xs">
             <div className="flex items-center gap-2 text-cyan-800">
               <span className="w-2 h-2 rounded-full bg-cyan-500" />
@@ -283,6 +405,9 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
                   </th>
                   <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider">
                     Employee ID
+                  </th>
+                  <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider">
+                    POC
                   </th>
                   <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider">
                     Check In
@@ -328,6 +453,7 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
                           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
                             {emp
                               .split(" ")
+                              .filter(Boolean)
                               .map((w) => w[0])
                               .join("")
                               .slice(0, 2)
@@ -339,54 +465,81 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
                         </div>
                       </td>
 
-                      {/* <td className="px-4 py-4">
+                      {/* Employee ID */}
+                      <td className="px-4 py-4">
                         <button
                           onClick={async () => {
-                            const newPin = generatePin();
-                            if (
-                              window.confirm(
-                                `Regenerate PIN for ${emp}? New: ${newPin}`
+                            const suggested = generateNextEmpId(
+                              Object.fromEntries(
+                                uniqueEmployees.map((e) => [
+                                  e.id,
+                                  { empId: e.empId },
+                                ])
                               )
-                            ) {
-                              await updateEmployeePin(empObj.id, newPin);
-                              showToast(`New PIN for ${emp}: ${newPin}`);
+                            );
+                            const newId = window.prompt(
+                              `Set Employee ID for ${emp}:`,
+                              empObj.empId || suggested
+                            );
+                            if (newId && newId.trim()) {
+                              await updateEmployeeEmpId(
+                                empObj.id,
+                                newId.trim()
+                              );
+                              showToast(
+                                `Employee ID for ${emp} set to ${newId.trim()}`
+                              );
                             }
                           }}
                           className="group px-3 py-1.5 rounded-lg bg-cyan-50 border border-cyan-200 text-cyan-800 font-mono text-xs font-bold hover:bg-cyan-100 hover:border-cyan-300 transition"
-                          title="Click to regenerate"
+                          title="Click to edit Employee ID"
                         >
-                          {empObj.pin}
+                          {empObj.empId || "—"}
                           <span className="ml-1.5 opacity-40 group-hover:opacity-100 transition">
-                            🔄
+                            ✏️
                           </span>
                         </button>
-                      </td> */}
+                      </td>
 
+                      {/* POC */}
                       <td className="px-4 py-4">
-  <button
-    onClick={async () => {
-      const suggested = generateNextEmpId(
-        Object.fromEntries(employees.map((e) => [e.id, { empId: e.empId }]))
-      );
-      const newId = window.prompt(
-        `Set Employee ID for ${emp}:`,
-        empObj.empId || suggested
-      );
-      if (newId && newId.trim()) {
-        await updateEmployeeEmpId(empObj.id, newId.trim());
-        showToast(`Employee ID for ${emp} set to ${newId.trim()}`);
-      }
-    }}
-    className="group px-3 py-1.5 rounded-lg bg-cyan-50 border border-cyan-200 text-cyan-800 font-mono text-xs font-bold hover:bg-cyan-100 hover:border-cyan-300 transition"
-    title="Click to edit Employee ID"
-  >
-    {empObj.empId || "—"}
-    <span className="ml-1.5 opacity-40 group-hover:opacity-100 transition">
-      ✏️
-    </span>
-  </button>
-</td>
+                        <button
+                          onClick={async () => {
+                            const newPoc = window.prompt(
+                              `Set POC for ${emp}:`,
+                              empObj.poc || ""
+                            );
+                            if (newPoc !== null) {
+                              await updateEmployeePoc(
+                                empObj.id,
+                                newPoc.trim()
+                              );
+                              showToast(
+                                `POC for ${emp} set to ${
+                                  newPoc.trim() || "(none)"
+                                }`
+                              );
+                            }
+                          }}
+                          className={`group px-3 py-1.5 rounded-lg border text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                            empObj.poc
+                              ? "bg-cyan-50 border-cyan-200 text-cyan-800 hover:bg-cyan-100"
+                              : "bg-slate-50 border-dashed border-slate-200 text-slate-400 hover:bg-slate-100"
+                          }`}
+                          title="Click to edit POC"
+                        >
+                          {empObj.poc ? (
+                            <>👤 {empObj.poc}</>
+                          ) : (
+                            <>+ POC</>
+                          )}
+                          <span className="opacity-40 group-hover:opacity-100 transition">
+                            ✏️
+                          </span>
+                        </button>
+                      </td>
 
+                      {/* Check In */}
                       <td className="px-4 py-4">
                         {editing?.employee === emp &&
                         editing.field === "checkIn" ? (
@@ -425,6 +578,7 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
                         )}
                       </td>
 
+                      {/* Check Out */}
                       <td className="px-4 py-4">
                         {editing?.employee === emp &&
                         editing.field === "checkOut" ? (
@@ -496,11 +650,13 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
 
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="text-center py-12 text-cyan-600">
+                    <td colSpan="8" className="text-center py-12 text-cyan-600">
                       <div className="text-4xl mb-2 opacity-60">🔍</div>
                       <div className="font-semibold">
-                        {employees.length === 0
+                        {uniqueEmployees.length === 0
                           ? "No employees yet. Click 'Add' to begin."
+                          : pocFilter !== "all"
+                          ? `No employees under "${pocFilter}"`
                           : "No matching employees found."}
                       </div>
                     </td>
@@ -518,11 +674,11 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
 
       {/* ============ MODALS ============ */}
       {showAdd && (
-       <AddEmployeeModal
-  onClose={() => setShowAdd(false)}
-  onAdd={handleAddEmployee}
-  existingEmployees={employees}
-/>
+        <AddEmployeeModal
+          onClose={() => setShowAdd(false)}
+          onAdd={handleAddEmployee}
+          existingEmployees={uniqueEmployees}
+        />
       )}
 
       {showSettings && (
@@ -535,7 +691,7 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
 
       {showExport && (
         <ExportRangeModal
-          employees={employees}
+          employees={uniqueEmployees}
           allAttendance={allAttendance}
           onClose={() => setShowExport(false)}
         />
@@ -546,6 +702,16 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
           employee={reportEmployee}
           allAttendance={allAttendance}
           onClose={() => setReportEmployee(null)}
+        />
+      )}
+
+      {statFilter && (
+        <StatDetailsModal
+          type={statFilter}
+          employees={pocFilteredEmployees}
+          dayData={dayData}
+          date={date}
+          onClose={() => setStatFilter(null)}
         />
       )}
 
@@ -577,29 +743,46 @@ const { unique: uniqueEmployees, duplicates: duplicateList } =
 
 /* ============ Sub-components ============ */
 
-function StatCard({ label, value, icon, color }) {
+function StatCard({ label, value, icon, color, onClick }) {
   const palettes = {
     cyan: "from-cyan-500 to-blue-600",
     emerald: "from-emerald-500 to-teal-600",
     amber: "from-amber-500 to-orange-500",
     rose: "from-rose-500 to-pink-600",
   };
+  const clickable = !!onClick;
+
   return (
-    <div className="bg-white/70 backdrop-blur-xl border border-white/60 rounded-2xl shadow-lg p-4 flex items-center gap-3 hover:shadow-xl hover:-translate-y-0.5 transition-all">
+    <button
+      onClick={onClick}
+      disabled={!clickable}
+      className={`group text-left bg-white/70 backdrop-blur-xl border border-white/60 rounded-2xl shadow-lg p-4 flex items-center gap-3 transition-all w-full ${
+        clickable
+          ? "hover:shadow-xl hover:-translate-y-1 cursor-pointer hover:border-cyan-300 active:scale-[0.98]"
+          : "cursor-default"
+      }`}
+    >
       <div
-        className={`w-11 h-11 rounded-xl bg-gradient-to-br ${palettes[color]} flex items-center justify-center text-white text-lg shadow-lg`}
+        className={`w-11 h-11 rounded-xl bg-gradient-to-br ${palettes[color]} flex items-center justify-center text-white text-lg shadow-lg ${
+          clickable ? "group-hover:scale-110 transition-transform" : ""
+        }`}
       >
         {icon}
       </div>
-      <div>
-        <div className="text-xs text-cyan-700/70 font-semibold uppercase tracking-wider">
+      <div className="flex-1">
+        <div className="text-xs text-cyan-700/70 font-semibold uppercase tracking-wider truncate">
           {label}
         </div>
         <div className="text-2xl font-bold text-cyan-900 tabular-nums">
           {value}
         </div>
       </div>
-    </div>
+      {clickable && (
+        <span className="text-cyan-400/60 text-xs opacity-0 group-hover:opacity-100 transition-opacity">
+          →
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -615,3 +798,18 @@ function ToolbarButton({ onClick, icon, label, color }) {
   );
 }
 
+function PocChip({ label, active, onClick, color }) {
+  const palettes = {
+    cyan: active
+      ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/30 border-transparent"
+      : "bg-white border-cyan-200 text-cyan-700 hover:bg-cyan-50 hover:border-cyan-300",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all hover:scale-[1.03] active:scale-[0.97] ${palettes[color]}`}
+    >
+      {label}
+    </button>
+  );
+}

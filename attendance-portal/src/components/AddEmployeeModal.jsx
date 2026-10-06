@@ -1,15 +1,30 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 
-export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) {
+export default function AddEmployeeModal({
+  onClose,
+  onAdd,
+  existingEmployees,
+}) {
   const [mode, setMode] = useState("single");
   const [name, setName] = useState("");
   const [empId, setEmpId] = useState("");
+  const [poc, setPoc] = useState("");
   const [err, setErr] = useState("");
   const [working, setWorking] = useState(false);
 
   const [bulkText, setBulkText] = useState("");
   const [autoId, setAutoId] = useState(true);
   const [bulkResult, setBulkResult] = useState(null);
+
+  // ---------- Existing POCs (from current employees) ----------
+  const existingPocs = useMemo(() => {
+    const s = new Set();
+    (existingEmployees || []).forEach((e) => {
+      const p = (e.poc || "").trim();
+      if (p) s.add(p);
+    });
+    return Array.from(s).sort();
+  }, [existingEmployees]);
 
   // ---------- helpers ----------
   const suggestNextId = () => {
@@ -23,7 +38,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
     return String(max + 1);
   };
 
-  // ---------- single add ----------
+  // ---------- single ----------
   const handleAddSingle = async () => {
     if (!name.trim()) {
       setErr("Name cannot be empty");
@@ -31,7 +46,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
     }
     setWorking(true);
     try {
-      await onAdd(name.trim(), empId.trim() || suggestNextId());
+      await onAdd(name.trim(), empId.trim() || suggestNextId(), poc.trim());
       onClose();
     } catch (e) {
       setErr("Failed: " + e.message);
@@ -41,11 +56,12 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
   };
 
   // ---------- bulk parse ----------
-  // Supports:
+  // Supported:
   //   Ganesh
   //   Ganesh, 1021
-  //   Ganesh , 1021
-  //   Ganesh|1021  (pipe also works)
+  //   Ganesh, 1021, Ramesh      ← name, id, poc
+  //   Ganesh, , Ramesh           ← name, (auto id), poc
+  //   Ganesh|1021|Ramesh
   const parseBulkInput = (text) => {
     const lines = text
       .split(/\r?\n/)
@@ -58,24 +74,23 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
     for (const line of lines) {
       let n = "";
       let id = "";
+      let p = "";
 
-      // If line contains a comma or pipe, treat as "Name, ID"
       if (line.includes(",") || line.includes("|")) {
         const parts = line.split(/[,|]/).map((s) => s.trim());
         n = parts[0] || "";
         id = parts[1] || "";
+        p = parts[2] || "";
       } else {
-        // Whole line = name
         n = line;
       }
 
       if (!n) continue;
-
       const key = n.toLowerCase();
-      if (seen.has(key)) continue; // skip duplicates within paste
+      if (seen.has(key)) continue;
       seen.add(key);
 
-      result.push({ name: n, empId: id });
+      result.push({ name: n, empId: id, poc: p });
     }
 
     return result;
@@ -84,6 +99,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
   const parsedBulk = parseBulkInput(bulkText);
   const previewCount = parsedBulk.length;
   const withCustomId = parsedBulk.filter((p) => p.empId).length;
+  const withPoc = parsedBulk.filter((p) => p.poc).length;
 
   const handleAddBulk = async () => {
     if (parsedBulk.length === 0) {
@@ -91,8 +107,6 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
       return;
     }
 
-    // Validation: if some rows have custom ID and others don't,
-    // and autoId is off → error
     if (!autoId) {
       const missingId = parsedBulk.find((p) => !p.empId);
       if (missingId) {
@@ -105,11 +119,9 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
 
     setWorking(true);
     setErr("");
-
     const added = [];
     const skipped = [];
 
-    // Compute counter start
     let counter = 1000;
     (existingEmployees || []).forEach((e) => {
       if (e.empId && /^\d+$/.test(e.empId)) {
@@ -122,28 +134,22 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
       for (const row of parsedBulk) {
         try {
           let idToUse = row.empId?.trim();
-
-          // If no custom ID was given, auto-generate one
           if (!idToUse) {
             if (!autoId) throw new Error("No ID");
             counter += 1;
             idToUse = String(counter);
           }
-
-          await onAdd(row.name, idToUse);
-          added.push({ name: row.name, empId: idToUse });
+          await onAdd(row.name, idToUse, row.poc || "");
+          added.push({ name: row.name, empId: idToUse, poc: row.poc });
         } catch (e) {
           skipped.push(row.name);
         }
       }
-
       setBulkResult({
         added: added.length,
         skipped: skipped.length,
-        list: added,
       });
       setBulkText("");
-
       if (skipped.length === 0) {
         setTimeout(() => onClose(), 1800);
       }
@@ -156,7 +162,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
 
   const handleDownloadBulkTemplate = () => {
     const csv =
-      "Employee Name, Employee ID\nGanesh, 1021\nHarsha, 1022\nK Naveen, 1023\n";
+      "Employee Name, Employee ID, POC\nGanesh, 1021, Ramesh\nHarsha, 1022, Ramesh\nK Naveen, 1023, Suresh\n";
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -184,7 +190,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
               <p className="text-xs text-cyan-700/70 font-medium">
                 {mode === "single"
                   ? "Add one employee at a time"
-                  : "Paste names with or without IDs"}
+                  : "Paste names with optional ID and POC"}
               </p>
             </div>
           </div>
@@ -270,6 +276,17 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   </p>
                 </div>
 
+                <div>
+                  <label className="block text-xs font-semibold text-cyan-800 uppercase tracking-wider mb-1.5">
+                    POC (Point of Contact)
+                  </label>
+                  <PocInput
+                    value={poc}
+                    onChange={setPoc}
+                    existingPocs={existingPocs}
+                  />
+                </div>
+
                 {err && (
                   <p className="text-rose-600 text-sm font-semibold flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
                     ⚠️ {err}
@@ -319,14 +336,14 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                       setErr("");
                       setBulkResult(null);
                     }}
-                    placeholder={`Enter one employee per line.\n\nWITH IDs:\nGanesh, 1021\nHarsha, 1022\nK Naveen, 1023\n\nWITHOUT IDs (auto-generated):\nGanesh\nHarsha\nK Naveen`}
+                    placeholder={`Format per line:\nName, ID, POC\n\nExamples:\nGanesh, 1021, Ramesh\nHarsha, , Ramesh\nK Naveen\nM Yuva Kumar, 1024`}
                     rows={9}
                     autoFocus
                     className="w-full px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-medium focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all resize-none text-sm leading-relaxed font-mono"
                   />
                   <div className="flex items-center justify-between mt-2 text-xs">
                     <span className="text-cyan-600">
-                      Format: <b>Name, ID</b> or just <b>Name</b>
+                      <b>Name, ID, POC</b> — ID/POC optional
                     </span>
                     <span
                       className={`font-bold ${
@@ -342,11 +359,17 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                           · {withCustomId} with ID
                         </span>
                       )}
+                      {withPoc > 0 && (
+                        <span className="text-cyan-600">
+                          {" "}
+                          · {withPoc} with POC
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>
 
-                {/* Live Preview */}
+                {/* Live preview */}
                 {previewCount > 0 && (
                   <div className="bg-cyan-50/60 border border-cyan-200 rounded-xl p-3">
                     <div className="text-[10px] font-bold text-cyan-800 uppercase tracking-wider mb-2">
@@ -356,17 +379,24 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                       {parsedBulk.slice(0, 20).map((p, idx) => (
                         <div
                           key={idx}
-                          className="flex items-center justify-between text-xs bg-white/70 rounded-lg px-2 py-1"
+                          className="grid grid-cols-12 gap-2 items-center text-xs bg-white/70 rounded-lg px-2 py-1"
                         >
-                          <span className="font-medium text-cyan-900 truncate mr-2">
+                          <span className="col-span-5 font-medium text-cyan-900 truncate">
                             {p.name}
                           </span>
                           <span
-                            className={`font-mono font-bold ${
+                            className={`col-span-3 font-mono font-bold text-right ${
                               p.empId ? "text-cyan-700" : "text-slate-400"
                             }`}
                           >
                             {p.empId || (autoId ? "auto" : "—")}
+                          </span>
+                          <span
+                            className={`col-span-4 font-medium text-right truncate ${
+                              p.poc ? "text-cyan-700" : "text-slate-400"
+                            }`}
+                          >
+                            {p.poc || "—"}
                           </span>
                         </div>
                       ))}
@@ -379,7 +409,6 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   </div>
                 )}
 
-                {/* Auto-ID toggle */}
                 <label className="flex items-center gap-3 cursor-pointer bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-3 hover:bg-cyan-100/70 transition">
                   <input
                     type="checkbox"
@@ -446,6 +475,8 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
   );
 }
 
+/* ============ Sub-components ============ */
+
 function TabBtn({ active, onClick, icon, label }) {
   return (
     <button
@@ -459,5 +490,49 @@ function TabBtn({ active, onClick, icon, label }) {
       <span>{icon}</span>
       {label}
     </button>
+  );
+}
+
+function PocInput({ value, onChange, existingPocs }) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const filtered = existingPocs.filter(
+    (p) =>
+      !value ||
+      p.toLowerCase().includes(value.toLowerCase()) ||
+      value.toLowerCase() === p.toLowerCase()
+  );
+
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setShowSuggestions(true);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+        placeholder="Type or pick a POC name"
+        className="w-full px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-medium focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all"
+      />
+      {showSuggestions && filtered.length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 bg-white/95 backdrop-blur-xl border border-cyan-200 rounded-xl shadow-xl max-h-40 overflow-y-auto">
+          {filtered.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => {
+                onChange(p);
+                setShowSuggestions(false);
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-cyan-800 hover:bg-cyan-50 transition border-b border-cyan-50 last:border-b-0"
+            >
+              👤 {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

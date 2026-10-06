@@ -96,7 +96,11 @@ export const seedEmployeesIfEmpty = async () => {
   const payload = {};
   DEFAULT_EMPLOYEES.forEach((emp, idx) => {
     const id = String(Date.now() + idx);
-    payload[id] = { name: emp.name, empId: emp.empId };
+    payload[id] = {
+      name: emp.name,
+      empId: emp.empId,
+      poc: emp.poc || "",
+    };
   });
   await set(ref(db, "employees"), payload);
   console.log("✅ Seeded", DEFAULT_EMPLOYEES.length, "employees");
@@ -112,7 +116,8 @@ export const subscribeEmployees = (callback) => {
       const arr = Object.entries(val).map(([id, data]) => ({
         id,
         name: data.name,
-        empId: data.empId, // replaces "pin"
+        empId: data.empId,
+        poc: data.poc || "",
       }));
       callback(arr);
     },
@@ -129,7 +134,7 @@ export const getEmployeeNames = async () => {
   return val ? Object.values(val).map((e) => e.name) : [];
 };
 
-export const addEmployee = async (name, empId) => {
+export const addEmployee = async (name, empId, poc) => {
   const trimmed = name.trim();
   if (!trimmed) return;
   const snap = await get(ref(db, "employees"));
@@ -145,7 +150,30 @@ export const addEmployee = async (name, empId) => {
   await set(ref(db, `employees/${id}`), {
     name: trimmed,
     empId: nextId,
+    poc: (poc || "").trim(),
   });
+};
+
+export const updateEmployeePoc = async (id, newPoc) => {
+  await update(ref(db, `employees/${id}`), { poc: (newPoc || "").trim() });
+};
+
+// Get unique list of POCs with counts
+export const getUniquePocs = (employees) => {
+  const map = new Map(); // lowercase -> { display, count }
+  for (const e of employees || []) {
+    const poc = (e.poc || "").trim();
+    if (!poc) continue;
+    const key = poc.toLowerCase();
+    if (map.has(key)) {
+      map.get(key).count += 1;
+    } else {
+      map.set(key, { display: poc, count: 1 });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    a.display.localeCompare(b.display)
+  );
 };
 
 // Get next sequential Employee ID like EMP1021

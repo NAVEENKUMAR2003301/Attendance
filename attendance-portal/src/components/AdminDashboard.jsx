@@ -8,8 +8,8 @@ import {
   deleteEmployee,
   setRecord,
   getTodayKey,
-  updateEmployeePin,
-  generatePin,
+  updateEmployeeEmpId,
+  generateNextEmpId,
   saveConfig,
   DEFAULT_CONFIG,
 } from "../utils/storage";
@@ -77,10 +77,9 @@ export default function AdminDashboard({ onBack }) {
     showToast(`Updated ${employee}'s ${field}`);
   };
 
-  const handleAddEmployee = async (name, pin) => {
-    await addEmployee(name, pin);
-    showToast(`Added ${name}`);
-  };
+ const handleAddEmployee = async (name, pin) => {
+  await addEmployee(name, pin);
+};
 
   const handleDelete = async (id, name) => {
     if (!window.confirm(`Delete ${name}?`)) return;
@@ -278,7 +277,7 @@ export default function AdminDashboard({ onBack }) {
                     Employee
                   </th>
                   <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider">
-                    PIN
+                    Employee ID
                   </th>
                   <th className="px-4 py-4 text-xs font-bold uppercase tracking-wider">
                     Check In
@@ -335,7 +334,7 @@ export default function AdminDashboard({ onBack }) {
                         </div>
                       </td>
 
-                      <td className="px-4 py-4">
+                      {/* <td className="px-4 py-4">
                         <button
                           onClick={async () => {
                             const newPin = generatePin();
@@ -356,7 +355,32 @@ export default function AdminDashboard({ onBack }) {
                             🔄
                           </span>
                         </button>
-                      </td>
+                      </td> */}
+
+                      <td className="px-4 py-4">
+  <button
+    onClick={async () => {
+      const suggested = generateNextEmpId(
+        Object.fromEntries(employees.map((e) => [e.id, { empId: e.empId }]))
+      );
+      const newId = window.prompt(
+        `Set Employee ID for ${emp}:`,
+        empObj.empId || suggested
+      );
+      if (newId && newId.trim()) {
+        await updateEmployeeEmpId(empObj.id, newId.trim());
+        showToast(`Employee ID for ${emp} set to ${newId.trim()}`);
+      }
+    }}
+    className="group px-3 py-1.5 rounded-lg bg-cyan-50 border border-cyan-200 text-cyan-800 font-mono text-xs font-bold hover:bg-cyan-100 hover:border-cyan-300 transition"
+    title="Click to edit Employee ID"
+  >
+    {empObj.empId || "—"}
+    <span className="ml-1.5 opacity-40 group-hover:opacity-100 transition">
+      ✏️
+    </span>
+  </button>
+</td>
 
                       <td className="px-4 py-4">
                         {editing?.employee === emp &&
@@ -489,10 +513,11 @@ export default function AdminDashboard({ onBack }) {
 
       {/* ============ MODALS ============ */}
       {showAdd && (
-        <AddEmployeeModal
-          onClose={() => setShowAdd(false)}
-          onAdd={handleAddEmployee}
-        />
+       <AddEmployeeModal
+  onClose={() => setShowAdd(false)}
+  onAdd={handleAddEmployee}
+  existingEmployees={employees}
+/>
       )}
 
       {showSettings && (
@@ -584,3 +609,4 @@ function ToolbarButton({ onClick, icon, label, color }) {
     </button>
   );
 }
+

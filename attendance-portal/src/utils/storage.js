@@ -96,7 +96,7 @@ export const seedEmployeesIfEmpty = async () => {
   const payload = {};
   DEFAULT_EMPLOYEES.forEach((emp, idx) => {
     const id = String(Date.now() + idx);
-    payload[id] = { name: emp.name, pin: emp.pin };
+    payload[id] = { name: emp.name, empId: emp.empId };
   });
   await set(ref(db, "employees"), payload);
   console.log("✅ Seeded", DEFAULT_EMPLOYEES.length, "employees");
@@ -112,7 +112,7 @@ export const subscribeEmployees = (callback) => {
       const arr = Object.entries(val).map(([id, data]) => ({
         id,
         name: data.name,
-        pin: data.pin,
+        empId: data.empId, // replaces "pin"
       }));
       callback(arr);
     },
@@ -129,7 +129,7 @@ export const getEmployeeNames = async () => {
   return val ? Object.values(val).map((e) => e.name) : [];
 };
 
-export const addEmployee = async (name, pin) => {
+export const addEmployee = async (name, empId) => {
   const trimmed = name.trim();
   if (!trimmed) return;
   const snap = await get(ref(db, "employees"));
@@ -138,27 +138,46 @@ export const addEmployee = async (name, pin) => {
     (e) => e.name.toLowerCase() === trimmed.toLowerCase()
   );
   if (exists) return;
+
+  const nextId = empId?.trim() || generateNextEmpId(val);
+
   const id = String(Date.now());
   await set(ref(db, `employees/${id}`), {
     name: trimmed,
-    pin: pin || generatePin(),
+    empId: nextId,
   });
+};
+
+// Get next sequential Employee ID like EMP1021
+// Get next sequential Employee ID like "1021"
+export const generateNextEmpId = (existingVal) => {
+  let max = 1000;
+  Object.values(existingVal || {}).forEach((e) => {
+    if (e.empId && /^\d+$/.test(e.empId)) {
+      const n = parseInt(e.empId, 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return String(max + 1);
 };
 
 export const deleteEmployee = async (id) => {
   await set(ref(db, `employees/${id}`), null);
 };
 
-export const updateEmployeePin = async (id, newPin) => {
-  await update(ref(db, `employees/${id}`), { pin: newPin });
+export const updateEmployeeEmpId = async (id, newEmpId) => {
+  await update(ref(db, `employees/${id}`), { empId: newEmpId });
 };
 
-export const verifyPin = async (name, pin) => {
+export const verifyEmpId = async (name, enteredDigits) => {
   const snap = await get(ref(db, "employees"));
   const val = snap.val() || {};
-  return Object.values(val).some(
-    (e) => e.name === name && String(e.pin) === String(pin)
-  );
+  return Object.values(val).some((e) => {
+    if (e.name !== name) return false;
+    if (!e.empId) return false;
+    const last4 = String(e.empId).slice(-4);
+    return last4 === String(enteredDigits);
+  });
 };
 
 export const generatePin = () =>

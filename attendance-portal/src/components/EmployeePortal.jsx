@@ -256,7 +256,7 @@ import {
   getRecord,
   setRecord,
   getTodayKey,
-  verifyPin,
+  verifyEmpId,
   subscribeConfig,
   DEFAULT_CONFIG,
 } from "../utils/storage";
@@ -304,19 +304,19 @@ export default function EmployeePortal({ onBack }) {
     }
   }, [selected, todayKey, tick]);
 
-  const handleVerify = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    const ok = await verifyPin(selected, pin);
-    setLoading(false);
-    if (ok) {
-      setVerified(true);
-      setPinError("");
-    } else {
-      setPinError("❌ Incorrect PIN. Try again.");
-      setPin("");
-    }
-  };
+const handleVerify = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+  const ok = await verifyEmpId(selected, pin); // pin = last 4 digits
+  setLoading(false);
+  if (ok) {
+    setVerified(true);
+    setPinError("");
+  } else {
+    setPinError("❌ Incorrect Employee ID. Try again.");
+    setPin("");
+  }
+};
 
   const handleCheckIn = async () => {
     await setRecord(todayKey, selected, { checkIn: formatTime() });

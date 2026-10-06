@@ -11,18 +11,19 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
   const [autoId, setAutoId] = useState(true);
   const [bulkResult, setBulkResult] = useState(null);
 
-  // Suggest next ID based on existing employees
+  // ---------- helpers ----------
   const suggestNextId = () => {
-  let max = 1000;
-  (existingEmployees || []).forEach((e) => {
-    if (e.empId && /^\d+$/.test(e.empId)) {
-      const n = parseInt(e.empId, 10);
-      if (!isNaN(n) && n > max) max = n;
-    }
-  });
-  return String(max + 1);
-};
+    let max = 1000;
+    (existingEmployees || []).forEach((e) => {
+      if (e.empId && /^\d+$/.test(e.empId)) {
+        const n = parseInt(e.empId, 10);
+        if (!isNaN(n) && n > max) max = n;
+      }
+    });
+    return String(max + 1);
+  };
 
+  // ---------- single add ----------
   const handleAddSingle = async () => {
     if (!name.trim()) {
       setErr("Name cannot be empty");
@@ -39,60 +40,112 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
     }
   };
 
+  // ---------- bulk parse ----------
+  // Supports:
+  //   Ganesh
+  //   Ganesh, 1021
+  //   Ganesh , 1021
+  //   Ganesh|1021  (pipe also works)
   const parseBulkInput = (text) => {
-    const raw = text
-      .split(/[\n,]+/)
-      .map((s) => s.trim())
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
       .filter(Boolean);
+
+    const result = [];
     const seen = new Set();
-    const unique = [];
-    for (const n of raw) {
-      const key = n.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(n);
+
+    for (const line of lines) {
+      let n = "";
+      let id = "";
+
+      // If line contains a comma or pipe, treat as "Name, ID"
+      if (line.includes(",") || line.includes("|")) {
+        const parts = line.split(/[,|]/).map((s) => s.trim());
+        n = parts[0] || "";
+        id = parts[1] || "";
+      } else {
+        // Whole line = name
+        n = line;
       }
+
+      if (!n) continue;
+
+      const key = n.toLowerCase();
+      if (seen.has(key)) continue; // skip duplicates within paste
+      seen.add(key);
+
+      result.push({ name: n, empId: id });
     }
-    return unique;
+
+    return result;
   };
 
-  const previewCount = parseBulkInput(bulkText).length;
+  const parsedBulk = parseBulkInput(bulkText);
+  const previewCount = parsedBulk.length;
+  const withCustomId = parsedBulk.filter((p) => p.empId).length;
 
   const handleAddBulk = async () => {
-    const names = parseBulkInput(bulkText);
-    if (names.length === 0) {
+    if (parsedBulk.length === 0) {
       setErr("Please enter at least one name");
       return;
     }
+
+    // Validation: if some rows have custom ID and others don't,
+    // and autoId is off → error
+    if (!autoId) {
+      const missingId = parsedBulk.find((p) => !p.empId);
+      if (missingId) {
+        setErr(
+          `Missing ID for "${missingId.name}". Add an ID or enable auto-generate.`
+        );
+        return;
+      }
+    }
+
     setWorking(true);
     setErr("");
+
     const added = [];
     const skipped = [];
+
+    // Compute counter start
     let counter = 1000;
-(existingEmployees || []).forEach((e) => {
-  if (e.empId && /^\d+$/.test(e.empId)) {
-    const n = parseInt(e.empId, 10);
-    if (!isNaN(n) && n > counter) counter = n;
-  }
-});
+    (existingEmployees || []).forEach((e) => {
+      if (e.empId && /^\d+$/.test(e.empId)) {
+        const n = parseInt(e.empId, 10);
+        if (!isNaN(n) && n > counter) counter = n;
+      }
+    });
+
     try {
-      for (const n of names) {
+      for (const row of parsedBulk) {
         try {
-          let idToUse;
-          if (autoId) {
-  counter += 1;
-  idToUse = String(counter);
-}
-          await onAdd(n, idToUse);
-          added.push(n);
+          let idToUse = row.empId?.trim();
+
+          // If no custom ID was given, auto-generate one
+          if (!idToUse) {
+            if (!autoId) throw new Error("No ID");
+            counter += 1;
+            idToUse = String(counter);
+          }
+
+          await onAdd(row.name, idToUse);
+          added.push({ name: row.name, empId: idToUse });
         } catch (e) {
-          skipped.push(n);
+          skipped.push(row.name);
         }
       }
-      setBulkResult({ added: added.length, skipped: skipped.length });
+
+      setBulkResult({
+        added: added.length,
+        skipped: skipped.length,
+        list: added,
+      });
       setBulkText("");
+
       if (skipped.length === 0) {
-        setTimeout(() => onClose(), 1500);
+        setTimeout(() => onClose(), 1800);
       }
     } catch (e) {
       setErr("Failed: " + e.message);
@@ -102,12 +155,13 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
   };
 
   const handleDownloadBulkTemplate = () => {
-    const csv = "Employee Name\nGanesh\nHarsha\nK Naveen\n";
+    const csv =
+      "Employee Name, Employee ID\nGanesh, 1021\nHarsha, 1022\nK Naveen, 1023\n";
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "employee-template.csv";
+    a.download = "employee-bulk-template.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -117,6 +171,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
       <div className="relative bg-white/95 backdrop-blur-xl border border-white/60 rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden my-4">
         <div className="h-1.5 w-full bg-gradient-to-r from-cyan-400 via-blue-500 to-cyan-400" />
 
+        {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xl shadow-lg shadow-cyan-500/30">
@@ -129,7 +184,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
               <p className="text-xs text-cyan-700/70 font-medium">
                 {mode === "single"
                   ? "Add one employee at a time"
-                  : "Paste or type multiple names"}
+                  : "Paste names with or without IDs"}
               </p>
             </div>
           </div>
@@ -141,24 +196,34 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
           </button>
         </div>
 
+        {/* Tabs */}
         <div className="px-6 pb-4">
           <div className="flex gap-2 p-1 bg-cyan-50 border border-cyan-100 rounded-2xl">
             <TabBtn
               active={mode === "single"}
-              onClick={() => { setMode("single"); setErr(""); setBulkResult(null); }}
+              onClick={() => {
+                setMode("single");
+                setErr("");
+                setBulkResult(null);
+              }}
               icon="👤"
               label="Single"
             />
             <TabBtn
               active={mode === "bulk"}
-              onClick={() => { setMode("bulk"); setErr(""); }}
+              onClick={() => {
+                setMode("bulk");
+                setErr("");
+              }}
               icon="👥"
               label="Bulk Add"
             />
           </div>
         </div>
 
-        <div className="px-6 pb-6">
+        {/* Body */}
+        <div className="px-6 pb-6 max-h-[70vh] overflow-y-auto">
+          {/* ---------- SINGLE ---------- */}
           {mode === "single" && (
             <>
               <div className="space-y-4">
@@ -168,7 +233,10 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   </label>
                   <input
                     value={name}
-                    onChange={(e) => { setName(e.target.value); setErr(""); }}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setErr("");
+                    }}
                     placeholder="e.g. Ganesh Kumar"
                     autoFocus
                     className="w-full px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-medium focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all"
@@ -182,8 +250,11 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   <div className="flex gap-2">
                     <input
                       value={empId}
-                      onChange={(e) => setEmpId(e.target.value.toUpperCase())}
+                      onChange={(e) =>
+                        setEmpId(e.target.value.replace(/\D/g, ""))
+                      }
                       placeholder={`Auto: ${suggestNextId()}`}
+                      inputMode="numeric"
                       className="flex-1 px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-mono tracking-wider focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all"
                     />
                     <button
@@ -195,7 +266,7 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                     </button>
                   </div>
                   <p className="text-[11px] text-cyan-600 mt-1.5">
-                    💡 Employee will enter the <b>last 4 digits</b> to check in
+                    💡 Employee enters their ID to check in
                   </p>
                 </div>
 
@@ -225,13 +296,14 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
             </>
           )}
 
+          {/* ---------- BULK ---------- */}
           {mode === "bulk" && (
             <>
               <div className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-xs font-semibold text-cyan-800 uppercase tracking-wider">
-                      Employee Names
+                      Employee Data
                     </label>
                     <button
                       onClick={handleDownloadBulkTemplate}
@@ -242,26 +314,72 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   </div>
                   <textarea
                     value={bulkText}
-                    onChange={(e) => { setBulkText(e.target.value); setErr(""); setBulkResult(null); }}
-                    placeholder={`Enter one name per line, or separate with commas:\n\nGanesh\nHarsha\nK Naveen\n\nor\n\nGanesh, Harsha, K Naveen`}
+                    onChange={(e) => {
+                      setBulkText(e.target.value);
+                      setErr("");
+                      setBulkResult(null);
+                    }}
+                    placeholder={`Enter one employee per line.\n\nWITH IDs:\nGanesh, 1021\nHarsha, 1022\nK Naveen, 1023\n\nWITHOUT IDs (auto-generated):\nGanesh\nHarsha\nK Naveen`}
                     rows={9}
                     autoFocus
-                    className="w-full px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-medium focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all resize-none text-sm leading-relaxed"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-cyan-200 bg-white text-cyan-900 font-medium focus:outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all resize-none text-sm leading-relaxed font-mono"
                   />
                   <div className="flex items-center justify-between mt-2 text-xs">
                     <span className="text-cyan-600">
-                      Separated by <b>newline</b> or <b>comma</b>
+                      Format: <b>Name, ID</b> or just <b>Name</b>
                     </span>
                     <span
                       className={`font-bold ${
-                        previewCount > 0 ? "text-emerald-600" : "text-cyan-500/70"
+                        previewCount > 0
+                          ? "text-emerald-600"
+                          : "text-cyan-500/70"
                       }`}
                     >
-                      {previewCount} name{previewCount !== 1 ? "s" : ""} detected
+                      {previewCount} name{previewCount !== 1 ? "s" : ""}
+                      {withCustomId > 0 && (
+                        <span className="text-cyan-600">
+                          {" "}
+                          · {withCustomId} with ID
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>
 
+                {/* Live Preview */}
+                {previewCount > 0 && (
+                  <div className="bg-cyan-50/60 border border-cyan-200 rounded-xl p-3">
+                    <div className="text-[10px] font-bold text-cyan-800 uppercase tracking-wider mb-2">
+                      Preview
+                    </div>
+                    <div className="max-h-32 overflow-y-auto space-y-1">
+                      {parsedBulk.slice(0, 20).map((p, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between text-xs bg-white/70 rounded-lg px-2 py-1"
+                        >
+                          <span className="font-medium text-cyan-900 truncate mr-2">
+                            {p.name}
+                          </span>
+                          <span
+                            className={`font-mono font-bold ${
+                              p.empId ? "text-cyan-700" : "text-slate-400"
+                            }`}
+                          >
+                            {p.empId || (autoId ? "auto" : "—")}
+                          </span>
+                        </div>
+                      ))}
+                      {previewCount > 20 && (
+                        <div className="text-[11px] text-cyan-600 text-center py-1">
+                          +{previewCount - 20} more...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Auto-ID toggle */}
                 <label className="flex items-center gap-3 cursor-pointer bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-3 hover:bg-cyan-100/70 transition">
                   <input
                     type="checkbox"
@@ -271,10 +389,10 @@ export default function AddEmployeeModal({ onClose, onAdd, existingEmployees }) 
                   />
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-cyan-900">
-                      Auto-generate Employee IDs
+                      Auto-generate IDs for rows without one
                     </div>
                     <div className="text-xs text-cyan-700/80">
-                      Each gets sequential ID like EMP1021, EMP1022, ...
+                      Sequential numbers continuing from last employee
                     </div>
                   </div>
                 </label>

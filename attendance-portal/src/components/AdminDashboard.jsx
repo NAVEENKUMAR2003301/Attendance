@@ -12,6 +12,8 @@ import {
   generateNextEmpId,
   saveConfig,
   DEFAULT_CONFIG,
+  dedupeEmployees,          // 👈 new
+  removeDuplicateEmployees,
 } from "../utils/storage";
 import { prettyTime } from "../utils/timeUtils";
 import { exportToExcel, importFromExcel } from "../utils/excelUtils";
@@ -37,7 +39,10 @@ export default function AdminDashboard({ onBack }) {
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
   const fileRef = useRef();
-
+// Compute unique employees (removes visual duplicates)
+const { unique: uniqueEmployees, duplicates: duplicateList } =
+  React.useMemo(() => dedupeEmployees(employees), [employees]);
+  
   useEffect(() => {
     const u1 = subscribeEmployees(setEmployees);
     const u2 = subscribeConfig(setConfig);

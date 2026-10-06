@@ -301,3 +301,59 @@ export const getLast30DaysRange = () => {
     to: to.toISOString().slice(0, 10),
   };
 };
+
+// ============ DUPLICATE HANDLING ============
+
+// Returns array of unique employees (keeps first occurrence by name, case-insensitive)
+export const dedupeEmployees = (employees) => {
+  const seen = new Map(); // lowercase name -> employee object
+  const duplicates = [];  // any extras
+
+  for (const emp of employees) {
+    const key = (emp.name || "").trim().toLowerCase();
+    if (!key) continue;
+    if (seen.has(key)) {
+      duplicates.push(emp); // this is a duplicate
+    } else {
+      seen.set(key, emp);
+    }
+  }
+
+  return {
+    unique: Array.from(seen.values()),
+    duplicates,
+  };
+};
+
+// Delete duplicate employee nodes from Firebase (keeps the first one found)
+export const removeDuplicateEmployees = async () => {
+  const snap = await get(ref(db, "employees"));
+  const val = snap.val() || {};
+
+  const seen = new Map(); // lowercase name -> id (kept)
+  const toDelete = [];    // ids to remove
+
+  // Sort ids ascending (oldest Firebase key first — Date.now() based)
+  const sortedIds = Object.keys(val).sort();
+
+  for (const id of sortedIds) {
+    const emp = val[id];
+    const key = (emp.name || "").trim().toLowerCase();
+    if (!key) {
+      toDelete.push(id); // empty name — remove
+      continue;
+    }
+    if (seen.has(key)) {
+      toDelete.push(id); // duplicate — remove
+    } else {
+      seen.set(key, id);
+    }
+  }
+
+  for (const id of toDelete) {
+    await set(ref(db, `employees/${id}`), null);
+  }
+
+  console.log(`🧹 Removed ${toDelete.length} duplicate employee(s)`);
+  return { removed: toDelete.length };
+};

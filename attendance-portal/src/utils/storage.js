@@ -2,6 +2,30 @@ import { ref, get, set, update, onValue } from "firebase/database";
 import { db } from "../firebase";
 import { DEFAULT_EMPLOYEES } from "../data/employees";
 
+// ============ FIREBASE-SAFE KEY ENCODING ============
+// Firebase keys can't contain: . # $ [ ]
+// Encode them as placeholder tokens and decode on read.
+
+export const encodeKey = (str) => {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/\./g, "__DOT__")
+    .replace(/#/g, "__HASH__")
+    .replace(/\$/g, "__DOLLAR__")
+    .replace(/\[/g, "__LBRACK__")
+    .replace(/\]/g, "__RBRACK__");
+};
+
+export const decodeKey = (str) => {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/__DOT__/g, ".")
+    .replace(/__HASH__/g, "#")
+    .replace(/__DOLLAR__/g, "$")
+    .replace(/__LBRACK__/g, "[")
+    .replace(/__RBRACK__/g, "]");
+};
+
 // ============ DEFAULT CONFIG ============
 export const DEFAULT_CONFIG = {
   checkInStart: "09:15",
@@ -51,7 +75,15 @@ export const previewOldAttendance = async () => getExpiredDateKeys();
 
 export const getAllAttendance = async () => {
   const snap = await get(ref(db, "attendance"));
-  return snap.val() || {};
+  const val = snap.val() || {};
+  const decoded = {};
+  Object.entries(val).forEach(([dateKey, dayData]) => {
+    decoded[dateKey] = {};
+    Object.entries(dayData || {}).forEach(([empKey, rec]) => {
+      decoded[dateKey][decodeKey(empKey)] = rec;
+    });
+  });
+  return decoded;
 };
 
 // ============ CONFIG ============
@@ -154,13 +186,42 @@ export const addEmployee = async (name, empId, poc) => {
   });
 };
 
+export const deleteEmployee = async (id) => {
+  await set(ref(db, `employees/${id}`), null);
+};
+
+export const updateEmployeeEmpId = async (id, newEmpId) => {
+  await update(ref(db, `employees/${id}`), { empId: newEmpId });
+};
+
 export const updateEmployeePoc = async (id, newPoc) => {
   await update(ref(db, `employees/${id}`), { poc: (newPoc || "").trim() });
 };
 
-// Get unique list of POCs with counts
+export const verifyEmpId = async (name, enteredDigits) => {
+  const snap = await get(ref(db, "employees"));
+  const val = snap.val() || {};
+  return Object.values(val).some((e) => {
+    if (e.name !== name) return false;
+    if (!e.empId) return false;
+    const last4 = String(e.empId).slice(-4);
+    return last4 === String(enteredDigits);
+  });
+};
+
+export const generateNextEmpId = (existingVal) => {
+  let max = 1000;
+  Object.values(existingVal || {}).forEach((e) => {
+    if (e.empId && /^\d+$/.test(e.empId)) {
+      const n = parseInt(e.empId, 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return String(max + 1);
+};
+
 export const getUniquePocs = (employees) => {
-  const map = new Map(); // lowercase -> { display, count }
+  const map = new Map();
   for (const e of employees || []) {
     const poc = (e.poc || "").trim();
     if (!poc) continue;
@@ -176,40 +237,56 @@ export const getUniquePocs = (employees) => {
   );
 };
 
-// Get next sequential Employee ID like EMP1021
-// Get next sequential Employee ID like "1021"
-export const generateNextEmpId = (existingVal) => {
-  let max = 1000;
-  Object.values(existingVal || {}).forEach((e) => {
-    if (e.empId && /^\d+$/.test(e.empId)) {
-      const n = parseInt(e.empId, 10);
-      if (!isNaN(n) && n > max) max = n;
+// ============ DUPLICATE HANDLING ============
+export const dedupeEmployees = (employees) => {
+  const seen = new Map();
+  const duplicates = [];
+
+  for (const emp of employees) {
+    const key = (emp.name || "").trim().toLowerCase();
+    if (!key) continue;
+    if (seen.has(key)) {
+      duplicates.push(emp);
+    } else {
+      seen.set(key, emp);
     }
-  });
-  return String(max + 1);
+  }
+
+  return {
+    unique: Array.from(seen.values()),
+    duplicates,
+  };
 };
 
-export const deleteEmployee = async (id) => {
-  await set(ref(db, `employees/${id}`), null);
-};
-
-export const updateEmployeeEmpId = async (id, newEmpId) => {
-  await update(ref(db, `employees/${id}`), { empId: newEmpId });
-};
-
-export const verifyEmpId = async (name, enteredDigits) => {
+export const removeDuplicateEmployees = async () => {
   const snap = await get(ref(db, "employees"));
   const val = snap.val() || {};
-  return Object.values(val).some((e) => {
-    if (e.name !== name) return false;
-    if (!e.empId) return false;
-    const last4 = String(e.empId).slice(-4);
-    return last4 === String(enteredDigits);
-  });
-};
 
-export const generatePin = () =>
-  String(Math.floor(1000 + Math.random() * 9000));
+  const seen = new Map();
+  const toDelete = [];
+  const sortedIds = Object.keys(val).sort();
+
+  for (const id of sortedIds) {
+    const emp = val[id];
+    const key = (emp.name || "").trim().toLowerCase();
+    if (!key) {
+      toDelete.push(id);
+      continue;
+    }
+    if (seen.has(key)) {
+      toDelete.push(id);
+    } else {
+      seen.set(key, id);
+    }
+  }
+
+  for (const id of toDelete) {
+    await set(ref(db, `employees/${id}`), null);
+  }
+
+  console.log(`🧹 Removed ${toDelete.length} duplicate employee(s)`);
+  return { removed: toDelete.length };
+};
 
 // ============ ATTENDANCE ============
 export const getTodayKey = () => {
@@ -221,7 +298,8 @@ export const getTodayKey = () => {
 };
 
 export const setRecord = async (dateKey, employee, patch) => {
-  await update(ref(db, `attendance/${dateKey}/${employee}`), patch);
+  const safeEmp = encodeKey(employee);
+  await update(ref(db, `attendance/${dateKey}/${safeEmp}`), patch);
   console.log("✅ Attendance updated:", dateKey, employee, patch);
 };
 
@@ -229,7 +307,14 @@ export const subscribeAttendance = (dateKey, callback) => {
   const r = ref(db, `attendance/${dateKey}`);
   return onValue(
     r,
-    (snap) => callback(snap.val() || {}),
+    (snap) => {
+      const val = snap.val() || {};
+      const decoded = {};
+      Object.entries(val).forEach(([k, v]) => {
+        decoded[decodeKey(k)] = v;
+      });
+      callback(decoded);
+    },
     (err) => {
       console.error("❌ subscribeAttendance:", err);
       callback({});
@@ -238,16 +323,26 @@ export const subscribeAttendance = (dateKey, callback) => {
 };
 
 export const getRecord = async (dateKey, employee) => {
-  const snap = await get(ref(db, `attendance/${dateKey}/${employee}`));
+  const safeEmp = encodeKey(employee);
+  const snap = await get(ref(db, `attendance/${dateKey}/${safeEmp}`));
   return snap.val() || { checkIn: null, checkOut: null };
 };
 
-// Subscribe to ALL attendance history (for range export)
 export const subscribeAllAttendance = (callback) => {
   const r = ref(db, "attendance");
   return onValue(
     r,
-    (snap) => callback(snap.val() || {}),
+    (snap) => {
+      const val = snap.val() || {};
+      const decoded = {};
+      Object.entries(val).forEach(([dateKey, dayData]) => {
+        decoded[dateKey] = {};
+        Object.entries(dayData || {}).forEach(([empKey, rec]) => {
+          decoded[dateKey][decodeKey(empKey)] = rec;
+        });
+      });
+      callback(decoded);
+    },
     (err) => {
       console.error("❌ subscribeAllAttendance:", err);
       callback({});
@@ -255,11 +350,22 @@ export const subscribeAllAttendance = (callback) => {
   );
 };
 
+// ============ EMPLOYEE REPORT HELPERS ============
+export const computeHours = (checkIn, checkOut) => {
+  if (!checkIn || !checkOut) return 0;
+  const [h1, m1] = checkIn.split(":").map(Number);
+  const [h2, m2] = checkOut.split(":").map(Number);
+  const mins = h2 * 60 + m2 - (h1 * 60 + m1);
+  if (mins <= 0) return 0;
+  return +(mins / 60).toFixed(2);
+};
 
-// ============ EMPLOYEE REPORT ============
-
-// Returns array of { date, checkIn, checkOut, hours, status } for a range
-export const getEmployeeReport = (allAttendance, employeeName, fromDate, toDate) => {
+export const getEmployeeReport = (
+  allAttendance,
+  employeeName,
+  fromDate,
+  toDate
+) => {
   const rows = [];
 
   Object.entries(allAttendance || {}).forEach(([dateKey, dayData]) => {
@@ -286,20 +392,9 @@ export const getEmployeeReport = (allAttendance, employeeName, fromDate, toDate)
   return rows;
 };
 
-// Compute hours between two "HH:MM" strings
-export const computeHours = (checkIn, checkOut) => {
-  if (!checkIn || !checkOut) return 0;
-  const [h1, m1] = checkIn.split(":").map(Number);
-  const [h2, m2] = checkOut.split(":").map(Number);
-  const mins = h2 * 60 + m2 - (h1 * 60 + m1);
-  if (mins <= 0) return 0;
-  return +(mins / 60).toFixed(2);
-};
-
-// Date range helpers
 export const getWeekRange = () => {
   const now = new Date();
-  const day = now.getDay(); // 0 = Sun
+  const day = now.getDay();
   const monday = new Date(now);
   monday.setDate(now.getDate() - ((day + 6) % 7));
   const sunday = new Date(monday);
@@ -328,60 +423,4 @@ export const getLast30DaysRange = () => {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
   };
-};
-
-// ============ DUPLICATE HANDLING ============
-
-// Returns array of unique employees (keeps first occurrence by name, case-insensitive)
-export const dedupeEmployees = (employees) => {
-  const seen = new Map(); // lowercase name -> employee object
-  const duplicates = [];  // any extras
-
-  for (const emp of employees) {
-    const key = (emp.name || "").trim().toLowerCase();
-    if (!key) continue;
-    if (seen.has(key)) {
-      duplicates.push(emp); // this is a duplicate
-    } else {
-      seen.set(key, emp);
-    }
-  }
-
-  return {
-    unique: Array.from(seen.values()),
-    duplicates,
-  };
-};
-
-// Delete duplicate employee nodes from Firebase (keeps the first one found)
-export const removeDuplicateEmployees = async () => {
-  const snap = await get(ref(db, "employees"));
-  const val = snap.val() || {};
-
-  const seen = new Map(); // lowercase name -> id (kept)
-  const toDelete = [];    // ids to remove
-
-  // Sort ids ascending (oldest Firebase key first — Date.now() based)
-  const sortedIds = Object.keys(val).sort();
-
-  for (const id of sortedIds) {
-    const emp = val[id];
-    const key = (emp.name || "").trim().toLowerCase();
-    if (!key) {
-      toDelete.push(id); // empty name — remove
-      continue;
-    }
-    if (seen.has(key)) {
-      toDelete.push(id); // duplicate — remove
-    } else {
-      seen.set(key, id);
-    }
-  }
-
-  for (const id of toDelete) {
-    await set(ref(db, `employees/${id}`), null);
-  }
-
-  console.log(`🧹 Removed ${toDelete.length} duplicate employee(s)`);
-  return { removed: toDelete.length };
 };

@@ -38,7 +38,7 @@ export default function AdminDashboard({ onBack }) {
   const [showExport, setShowExport] = useState(false);
   const [reportEmployee, setReportEmployee] = useState(null);
   const [statFilter, setStatFilter] = useState(null);
-  const [pocFilter, setPocFilter] = useState("all"); // "all" | poc name
+  const [pocFilter, setPocFilter] = useState("all");
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState("");
   const [toast, setToast] = useState("");
@@ -235,11 +235,7 @@ export default function AdminDashboard({ onBack }) {
         {/* ============ STAT CARDS ============ */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <StatCard
-            label={
-              pocFilter === "all"
-                ? "Total Employees"
-                : `${pocFilter} Team`
-            }
+            label={pocFilter === "all" ? "Total Employees" : `${pocFilter} Team`}
             value={totalEmp}
             icon="👥"
             color="cyan"
@@ -465,7 +461,6 @@ export default function AdminDashboard({ onBack }) {
                         </div>
                       </td>
 
-                      {/* Employee ID */}
                       <td className="px-4 py-4">
                         <button
                           onClick={async () => {
@@ -482,10 +477,7 @@ export default function AdminDashboard({ onBack }) {
                               empObj.empId || suggested
                             );
                             if (newId && newId.trim()) {
-                              await updateEmployeeEmpId(
-                                empObj.id,
-                                newId.trim()
-                              );
+                              await updateEmployeeEmpId(empObj.id, newId.trim());
                               showToast(
                                 `Employee ID for ${emp} set to ${newId.trim()}`
                               );
@@ -501,7 +493,6 @@ export default function AdminDashboard({ onBack }) {
                         </button>
                       </td>
 
-                      {/* POC */}
                       <td className="px-4 py-4">
                         <button
                           onClick={async () => {
@@ -510,10 +501,7 @@ export default function AdminDashboard({ onBack }) {
                               empObj.poc || ""
                             );
                             if (newPoc !== null) {
-                              await updateEmployeePoc(
-                                empObj.id,
-                                newPoc.trim()
-                              );
+                              await updateEmployeePoc(empObj.id, newPoc.trim());
                               showToast(
                                 `POC for ${emp} set to ${
                                   newPoc.trim() || "(none)"
@@ -528,18 +516,13 @@ export default function AdminDashboard({ onBack }) {
                           }`}
                           title="Click to edit POC"
                         >
-                          {empObj.poc ? (
-                            <>👤 {empObj.poc}</>
-                          ) : (
-                            <>+ POC</>
-                          )}
+                          {empObj.poc ? <>👤 {empObj.poc}</> : <>+ POC</>}
                           <span className="opacity-40 group-hover:opacity-100 transition">
                             ✏️
                           </span>
                         </button>
                       </td>
 
-                      {/* Check In */}
                       <td className="px-4 py-4">
                         {editing?.employee === emp &&
                         editing.field === "checkIn" ? (
@@ -578,7 +561,6 @@ export default function AdminDashboard({ onBack }) {
                         )}
                       </td>
 
-                      {/* Check Out */}
                       <td className="px-4 py-4">
                         {editing?.employee === emp &&
                         editing.field === "checkOut" ? (
